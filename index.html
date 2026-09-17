@@ -1,0 +1,1628 @@
+<title>Tempo Motion Gallery</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<!--
+  Tempo Motion Gallery  —  v0.2.0
+  ARCHITECTURE (grammar foundation + bespoke escape hatch, on shared rails):
+    RAILS   : rest pose -> envelope -> clamp -> return-to-form -> colour -> controls  (engine owns these)
+    LAYER 1 : the GRAMMAR. 9 channels, each a pure transform on the pose:
+              travel · orbit · spin · splay · tilt · spread · scale · pulse · fill
+              A motion is authored as channel values over time. Most motions are data.
+    LAYER 2 : optional custom(pose,t) escape hatch for gestures channels can't express
+              (aim, pivot-about-a-point, tunnelling). Same rails, still resolves to form.
+  Timing strip on every tile renders from each motion's phase list.
+-->
+<style>
+  :root{
+    --blue:#0055FF; --green:#03DF7B; --navy:#002755; --slate:#425466;
+    --cloud:#EEF4FA; --line:#DCE6F2; --white:#FFFFFF; --stagebg:#FFFFFF;
+    --bg:#F6F9FD; --card:#FFFFFF; --ink:var(--navy); --muted:#6B7C93; --faint:#9DB0C7;
+    --radius:16px; --shadow:0 1px 2px rgba(0,39,85,.05),0 8px 30px rgba(0,39,85,.06);
+  }
+  :root[data-theme="dark"]{
+    --cloud:#0c2036; --line:#1b3557; --bg:#071322; --card:#0d1f33;
+    --ink:#EAF1FB; --muted:#8CA3BE; --faint:#5f76a0;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 34px rgba(0,0,0,.35);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --cloud:#0c2036; --line:#1b3557; --bg:#071322; --card:#0d1f33;
+      --ink:#EAF1FB; --muted:#8CA3BE; --faint:#5f76a0;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 34px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3,.bf{font-family:Manrope,system-ui,sans-serif;}
+  .mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 24px}
+
+  header.top{padding:44px 0 6px}
+  .eyebrow{font:600 12px/1 Manrope;letter-spacing:.16em;text-transform:uppercase;color:var(--blue)}
+  header.top h1{font-weight:800;font-size:42px;letter-spacing:-.02em;margin:14px 0 8px}
+  header.top p{margin:0;max-width:760px;color:var(--muted);font-size:15px;line-height:1.6}
+  .ver{display:inline-block;margin-left:10px;font:600 11px/1 'JetBrains Mono';letter-spacing:.04em;
+    color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:5px 9px;vertical-align:middle}
+
+  /* controls */
+  .panel{position:sticky;top:10px;z-index:30;margin:22px 0 14px;background:color-mix(in srgb,var(--card) 88%,transparent);
+    border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 16px;backdrop-filter:blur(8px)}
+  .rows{display:flex;flex-wrap:wrap;gap:18px 26px;align-items:flex-start}
+  .grp{display:flex;flex-direction:column;gap:9px}
+  .glabel{font:700 10px/1 'JetBrains Mono';letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .sliders{display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:10px 18px}
+  .ctl{display:flex;flex-direction:column;gap:3px;min-width:140px}
+  .ctl label{font:600 12px/1.2 Inter;display:flex;justify-content:space-between;gap:8px}
+  .ctl label span{color:var(--blue);font-variant-numeric:tabular-nums;font-family:'JetBrains Mono'}
+  input[type=range]{-webkit-appearance:none;appearance:none;height:4px;border-radius:4px;background:var(--line);outline:none;margin:5px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--blue);cursor:pointer;border:2px solid var(--card);box-shadow:0 1px 3px rgba(0,39,85,.3)}
+  input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--blue);cursor:pointer;border:2px solid var(--card)}
+  .toggles{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{font:600 12px/1 Inter;color:var(--ink);background:var(--cloud);border:1px solid var(--line);border-radius:999px;padding:7px 12px;cursor:pointer;user-select:none;transition:.15s}
+  .swpick{display:inline-flex;gap:6px;align-items:center;vertical-align:middle;margin-right:8px}
+  .sw{width:22px;height:22px;border-radius:999px;border:2px solid var(--line);padding:0;cursor:pointer;transition:.15s;box-shadow:inset 0 0 0 2px #fff}
+  .sw.on{border-color:var(--ink);transform:scale(1.12)}
+  .sw:hover{transform:scale(1.12)}
+  .tchip[aria-pressed=true]{background:var(--green);color:var(--navy);border-color:var(--green)}
+  .bgsw{box-shadow:none}
+  .bgpick .sw{border-width:1px}
+  .chip[aria-pressed="true"]{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .chip.alt[aria-pressed="true"]{background:var(--navy);border-color:var(--navy)}
+  .btn{font:700 12px/1 Manrope;color:var(--blue);background:transparent;border:1px solid var(--blue);border-radius:999px;padding:8px 14px;cursor:pointer}
+  .btn:hover{background:var(--blue);color:#fff}
+  .sep{width:1px;align-self:stretch;background:var(--line)}
+  .navchips{display:flex;flex-wrap:wrap;gap:7px;margin:6px 0 30px}
+  .navchips a{font:600 11px/1 'JetBrains Mono';letter-spacing:.03em;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 12px;text-decoration:none}
+  .navchips a:hover{color:var(--blue);border-color:var(--blue)}
+
+  /* sections */
+  .sechead{display:flex;align-items:baseline;gap:12px;margin:40px 0 4px;scroll-margin-top:120px}
+  .sechead .n{font:600 12px/1 'JetBrains Mono';color:var(--faint);letter-spacing:.1em}
+  .sechead h2{font-size:23px;font-weight:800;letter-spacing:-.01em;margin:0}
+  .sechead .count{font:600 11px/1 'JetBrains Mono';color:var(--faint)}
+  .secsub{margin:8px 0 20px;color:var(--muted);font-size:14px;max-width:820px;line-height:1.6}
+
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  @media(max-width:680px){.grid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:460px){.grid{grid-template-columns:1fr}}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .tile .stage{background:var(--stagebg);aspect-ratio:1/1;position:relative;transition:background .2s}
+  .tile .cap{padding:13px 16px 16px}
+  .tile .cap .nm{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .tile .cap h3{margin:0;font-size:16px;font-weight:700}
+  .tile .cap .num{font:600 12px/1 'JetBrains Mono';color:var(--green)}
+  .tile .cap .prop{margin:8px 0 0;font:600 10.5px/1.3 'JetBrains Mono';letter-spacing:.03em;color:var(--blue);text-transform:uppercase}
+  .tile .cap .desc{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
+  svg.stagesvg{display:block;width:100%;height:100%}
+
+  /* timing strip */
+  .strip{display:flex;gap:3px;margin:12px 0 2px;height:16px;position:relative}
+  .strip .seg{position:relative;background:var(--line);border-radius:3px;overflow:hidden;min-width:3px;transition:background .1s}
+  .strip .seg.on{background:var(--blue)}
+  .strip .seg .sl{position:absolute;left:5px;top:50%;transform:translateY(-50%);font:600 8px/1 'JetBrains Mono';letter-spacing:.02em;color:var(--faint);white-space:nowrap;text-transform:uppercase}
+  .strip .seg.on .sl{color:#fff}
+  .strip .head{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--navy);border-radius:2px;pointer-events:none;transition:none}
+  :root[data-theme="dark"] .strip .head{background:#fff}
+
+  /* per-card sliders */
+  .tsliders{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line)}
+  .tctl{display:flex;flex-direction:column;gap:0}
+  .tctl label{font:600 10px/1.3 Inter;display:flex;justify-content:space-between;gap:6px;color:var(--muted)}
+  .tctl label span{color:var(--blue);font-variant-numeric:tabular-nums;font-family:'JetBrains Mono'}
+  .tctl input[type=range]{margin:2px 0 5px}
+
+  /* view switch + agent-state loader */
+  .viewswitch{display:flex;gap:8px;margin:18px 0 2px}
+  .vbtn{font:700 12px/1 Manrope;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:9px 16px;cursor:pointer}
+  .vbtn.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+  #loaderView{margin:16px 0 10px}
+  .loaderwrap{display:grid;grid-template-columns:minmax(260px,1fr) 340px;gap:28px;align-items:stretch;
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:26px}
+  @media(max-width:760px){.loaderwrap{grid-template-columns:1fr}}
+  .stagebox{display:flex;align-items:center;justify-content:center;min-height:300px;background:var(--stagebg);border-radius:12px;padding:20px;transition:background .2s}
+  .stagepreview{display:flex;flex-direction:column;align-items:center;gap:18px}
+  .pxframe{display:flex;align-items:center;justify-content:center}
+  .pxframe svg{display:block;image-rendering:auto}
+  #loaderActualWrap{padding:8px;background:var(--card);border:1px dashed var(--line);border-radius:8px}
+  .pxcap{font:600 11px/1 'JetBrains Mono';color:var(--faint);letter-spacing:.03em}
+  .loaderside{display:flex;flex-direction:column}
+  .loaderside .glabel{margin:14px 0 0}
+  .evbtns,.sizebtns{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 4px}
+  .evbtns button,.sizebtns button{font:600 12px/1 Inter;color:var(--ink);background:var(--cloud);border:1px solid var(--line);border-radius:999px;padding:8px 13px;cursor:pointer}
+  .evbtns button.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .sizebtns button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .statusline{font:700 14px/1.4 Manrope;color:var(--ink)}
+  .statusline b{color:var(--blue)}
+  .report{font:500 11px/1.55 'JetBrains Mono';color:var(--muted);background:var(--cloud);border:1px solid var(--line);
+    border-radius:10px;padding:12px;white-space:pre-wrap;margin-top:8px;flex:1;min-height:120px;max-height:280px;overflow:auto}
+  .seqwrap .stagebox{min-height:360px}
+  .seqsteps{display:flex;flex-direction:column;gap:3px;margin:8px 0 14px}
+  .seqstep{display:flex;align-items:center;gap:9px;font:600 12.5px/1.4 Inter;color:var(--muted);padding:6px 9px;border-radius:8px;transition:.15s;cursor:pointer}
+  .seqstep:hover{background:var(--cloud)}
+  .seqstep.on:hover{background:var(--blue)}
+  .seqsel{font:600 12px/1 Inter;color:var(--ink);background:var(--cloud);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:2px 0 4px;cursor:pointer;max-width:220px}
+  .seqstrip{width:360px;max-width:100%;height:20px;margin:12px 0 0}
+  .seqstep .n{font:700 10px/1 'JetBrains Mono';color:var(--faint);width:14px;text-align:right}
+  .seqstep.done{color:var(--faint)}
+  .seqstep.done .n{color:var(--green)}
+  .seqstep.on{background:var(--blue);color:#fff}
+  .seqstep.on .n{color:#fff}
+
+  .foot{margin:46px 0 64px;color:var(--muted);font-size:12.5px;line-height:1.6;border-top:1px solid var(--line);padding-top:18px}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs id="gdefs">
+  <filter id="goo" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
+    <!-- blur mixes RGB by coverage -> contact zone blends BOTH colours; alpha ramp snaps to a solid mass. -->
+    <feGaussianBlur in="SourceGraphic" stdDeviation="22" result="b"/>
+    <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8"/>
+  </filter>
+</defs></svg>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">Tempo Sub-brand · Motion</div>
+    <h1>Tempo Motion <span class="ver">v0.19.0</span></h1>
+    <p>The Tempo mark is animated, never redrawn. It lives as four metaball forms that melt and split
+       through a shared engine and always resolve back to the logo. Motions are authored two ways:
+       a grammar of nine channels (travel, orbit, spin, splay, tilt, spread, scale, pulse, fill) for
+       gestures that are pure data, and a physics escape hatch for the ones that need real gravity,
+       orbits, or collisions. Every motion then inherits the same rails: breathe and tremble, fit-to-canvas,
+       the metaball goo, a two-tone or mono colour system across six brand hues, and render targets from
+       16 to 48px. The Sequence now maps to Tempo's real agent states — Reveal, Thinking, Tool use,
+       Waiting, Complete — chaining each through a shared rest pose (intro, loop, outro) into one seamless
+       run. Reveal is the one motion that begins from a single point rather than the logo.</p>
+  </header>
+
+  <div class="viewswitch">
+    <button class="vbtn on" data-view="sequence">Sequence</button>
+    <button class="vbtn" data-view="gallery">Gallery</button>
+  </div>
+
+  <section id="seqView">
+    <div class="loaderwrap seqwrap">
+      <div class="stagebox">
+        <div class="stagepreview">
+          <div class="pxframe" id="seqZoomWrap"></div>
+          <div class="pxframe" id="seqActualWrap"></div>
+          <div class="pxcap">actual render · <span id="seqPxLabel">48</span>px · 30fps</div>
+          <div class="strip seqstrip" id="seqStrip"></div>
+        </div>
+      </div>
+      <div class="loaderside">
+        <div class="statusline">State <b id="seqNow">Reveal</b> · <span id="seqPhase">loop</span></div>
+        <div class="glabel" id="seqApp">First paint · logo forms</div>
+        <div class="glabel">Agent states · each resolves to the logo before the next</div>
+        <div class="seqsteps" id="seqSteps"></div>
+        <div class="glabel">Loop</div>
+        <select id="seqLoop" class="seqsel"></select>
+        <div class="glabel">Loop count</div>
+        <div class="sizebtns" id="seqReps">
+          <button data-reps="1" class="on">1×</button><button data-reps="2">2×</button><button data-reps="3">3×</button>
+        </div>
+        <div class="evbtns">
+          <button id="seqPlay" class="primary">Pause</button>
+          <button id="seqRestart">Restart</button>
+        </div>
+        <div class="glabel">Render size</div>
+        <div class="sizebtns" id="seqSizes">
+          <button data-px="16">16</button><button data-px="24">24</button><button data-px="32">32</button><button data-px="48" class="on">48</button>
+        </div>
+        <div class="glabel">Colour direction · all previews</div>
+        <div class="toggles" id="seqCols"></div>
+        <div class="glabel">Background</div>
+        <div class="toggles" id="seqBg"></div>
+        <div class="glabel">Appearance · all previews</div>
+        <div class="toggles" id="seqToggles"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="galleryView" hidden>
+  <div class="panel">
+    <div class="rows">
+      <div class="grp"><div class="glabel">Colour direction · all cards</div><div class="toggles" id="galleryCols"></div></div>
+      <div class="sep"></div>
+      <div class="grp"><div class="glabel">Background</div><div class="toggles" id="galleryBg"></div></div>
+      <div class="sep"></div>
+      <div class="grp"><div class="glabel">Interaction · all cards</div><div class="toggles" id="toggles"></div></div>
+      <div class="sep"></div>
+      <div class="grp"><div class="glabel">Appearance · all cards</div><div class="toggles" id="modes"></div></div>
+      <div class="grp"><div class="glabel">&nbsp;</div><button class="btn" id="reset">Reset all</button></div>
+    </div>
+  </div>
+
+  <div class="navchips" id="nav"></div>
+
+  <div id="sections"></div>
+  </section>
+
+  <div class="foot" id="foot">
+    Tempo Motion · v0.17.0 · Sequence rebuilt to Tempo's agent states (Reveal · Thinking · Tool use · Waiting · Complete); new Reveal motion forms from a single point. Colour direction (two-tone brand default, Mono option, 6 hues incl. white reverse) & brand-palette background swatches; 48px default render + Sequence showcase + Gallery.
+    Source of truth lives in your <span class="mono">tempo-motion-gallery/</span> folder; this page is the review copy.
+    Pin a comment on any tile and send it to Claude.
+  </div>
+</div>
+
+<script>
+/* ============================ BRAND (geometry from Figma "Merge · Construction") ============================ */
+var BRAND={ blue:'#0055FF', green:'#03DF7B', navy:'#002755', violet:'#5B27E0', orange:'#F5872B' };
+// Colour direction: cluster hue + treatment. Two-tone = hue cluster + green accent (the brand mark).
+// Mono = whole mark in the single hue. Blue=light surfaces, Navy=recommended, rest=exploration only.
+var HUE={ blue:BRAND.blue, navy:BRAND.navy, green:BRAND.green, violet:BRAND.violet, orange:BRAND.orange, white:'#FFFFFF' };
+var HUES=[
+  {k:'blue',   name:'Skedulo Blue', note:'Light surfaces'},
+  {k:'navy',   name:'Navy',         note:'Recommended'},
+  {k:'green',  name:'Green',        note:'Exploration'},
+  {k:'violet', name:'Violet',       note:'Exploration'},
+  {k:'orange', name:'Orange',       note:'Exploration'},
+  {k:'white',  name:'White',        note:'Reverse on dark'} ];
+// Background swatches for the preview stage — the brand palette (plus white for a light surface).
+var BGS=[
+  {k:'white',  name:'White',        col:'#FFFFFF'},
+  {k:'blue',   name:'Skedulo Blue', col:BRAND.blue},
+  {k:'navy',   name:'Navy',         col:BRAND.navy},
+  {k:'green',  name:'Green',        col:BRAND.green},
+  {k:'violet', name:'Violet',       col:BRAND.violet},
+  {k:'orange', name:'Orange',       col:BRAND.orange} ];
+function markCols(p){ var cl=HUE[p.hue]||BRAND.blue; return { cluster:cl, duotone:p.duotone===true }; }
+function applyStageBg(hex){ document.documentElement.style.setProperty('--stagebg', hex); }
+var off={ top:[-0.179,-0.742], left:[-0.385,0.221], br:[0.564,0.521], acc:[1.101,-0.616] };
+var accAng0=Math.atan2(off.acc[1],off.acc[0]);
+var accHyp=Math.hypot(off.acc[0],off.acc[1]);   // 1.2613
+
+/* ============================ ENGINE ============================ */
+var CX=500, CY=500, TAU=Math.PI*2;
+function lerp(a,b,t){return a+(b-a)*t;}
+function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v;}
+function ei(t){return t*t*t;}
+function eo(t){return 1-Math.pow(1-t,3);}
+function eio(t){return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;}
+function pulse01(p){return p<.5?eio(p/.5):eio((1-p)/.5);}       // 0->1->0
+function eob(p){var c1=2.0,c3=c1+1;return 1+c3*Math.pow(p-1,3)+c1*Math.pow(p-1,2);}  // ease-out-back (overshoot)
+var PI=Math.PI;
+function rnd(){return Math.random()*2-1;}
+// Skedulo master logomark as 4 metaball targets: two offset horizontal bars (2 circles each),
+// navy, separated enough vertically that the goo keeps them as two distinct bars. Ball-index order:
+// [bottom-left, top-left, bottom-right, top-right]. Bottom bar shifts left, top bar shifts right.
+function SKED(d){return [
+  {x:CX-0.42*d,y:CY+0.66*d,r:0.38*d},{x:CX-0.13*d,y:CY-0.66*d,r:0.38*d},
+  {x:CX+0.13*d,y:CY+0.66*d,r:0.38*d},{x:CX+0.42*d,y:CY-0.66*d,r:0.38*d}];}
+function rot(p,a){var c=Math.cos(a),s=Math.sin(a);return [p[0]*c-p[1]*s, p[0]*s+p[1]*c];}
+function sv(p,k){return [p[0]*k,p[1]*k];}
+// segment progress: fraction through [a,b] ms, clamped
+function seg(t,a,b){return clamp((t-a)/(b-a),0,1);}
+function mix(h1,h2,t){
+  function n(h){return [parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)];}
+  var a=n(h1),b=n(h2),c=a.map(function(v,i){return Math.round(lerp(v,b[i],t));});
+  return '#'+c.map(function(v){return ('0'+v.toString(16)).slice(-2);}).join('');
+}
+
+var params={ speed:1, spread:1, size:150, tension:1, reach:1,
+  breathe:false, tremble:false, necks:true, colourfuse:true, mono:false, lowpower:false,
+  hue:'blue', duotone:true };   // duotone true => two-tone brand (hue cluster + green accent) by default
+var DEFAULTS=JSON.parse(JSON.stringify(params));
+
+/* buildPose(channels) -> forms[4]  (0,1,2 cluster = top,left,br ; 3 accent)
+   Channels (all default 0 except spread=1):
+     spin, splay, tilt, spread, orbit, travel, pulse, scaleAcc, scaleAll, fill, bodyDX, bodyDY  */
+function P(c){
+  c=c||{};
+  var d=params.size, spr=params.spread;
+  var spin=c.spin||0, splay=c.splay||0, tilt=c.tilt||0;
+  var spread=(c.spread==null?1:c.spread);
+  var orbit=c.orbit||0, travel=c.travel||0, pulse=c.pulse||0;
+  var sAcc=c.scaleAcc||0, sAll=c.scaleAll||0, fill=c.fill||0;
+  var bx=c.bodyDX||0, by=c.bodyDY||0;
+  // arms from hub (left node)
+  var hub=[off.left[0],off.left[1]];
+  var aT=[off.top[0]-hub[0], off.top[1]-hub[1]];
+  var aB=[off.br[0]-hub[0], off.br[1]-hub[1]];
+  aT=sv(aT,1+tilt*0.6); aB=sv(aB,1-tilt*0.6);   // tilt: top reaches (+), br draws in
+  aT=rot(aT,-splay*0.5); aB=rot(aB,splay*0.5);   // splay: open/close the V
+  var n=[[hub[0]+aT[0],hub[1]+aT[1]],[hub[0],hub[1]],[hub[0]+aB[0],hub[1]+aB[1]]];
+  var cx=(n[0][0]+n[1][0]+n[2][0])/3, cy=(n[0][1]+n[1][1]+n[2][1])/3;
+  n=n.map(function(p){return [p[0]-cx,p[1]-cy];});   // keep cluster centroid at origin
+  var sf=spread*spr;
+  n=n.map(function(p){return [p[0]*sf,p[1]*sf];});   // spread (tuck if <1)
+  n=n.map(function(p){return rot(p,spin);});         // spin the body
+  var forms=n.map(function(p){return {x:CX+(p[0]+bx)*d, y:CY+(p[1]+by)*d, r:d/2*(1+sAll)};});
+  // accent (polar around origin)
+  var ang=accAng0+orbit;
+  var dist=accHyp*d*spread*spr + (travel+pulse)*d;
+  forms.push({x:CX+Math.cos(ang)*dist, y:CY+Math.sin(ang)*dist, r:d/2*(1+sAll)*(1+sAcc), blue:fill, acc:true});
+  return forms;
+}
+function restPose(){return P({});}
+
+function envelope(forms,C){
+  var d=params.size;
+  if(params.breathe){var b=1+0.045*Math.sin(C/900*TAU);for(var i=0;i<forms.length;i++)forms[i].r*=b;}
+  if(params.tremble){for(var j=0;j<forms.length;j++){forms[j].x+=Math.sin(C/70+j*1.7)*d*0.012;forms[j].y+=Math.cos(C/61+j*2.3)*d*0.012;}}
+  for(var k=0;k<forms.length;k++){var f=forms[k];f.x=clamp(f.x,f.r,1000-f.r);f.y=clamp(f.y,f.r,1000-f.r);}
+  return forms;
+}
+// helpers for custom motions
+function nearestClusterIndex(forms){ // to accent
+  var a=forms[3],best=0,bd=1e9;
+  for(var i=0;i<3;i++){var dx=forms[i].x-a.x,dy=forms[i].y-a.y,dd=dx*dx+dy*dy;if(dd<bd){bd=dd;best=i;}}
+  return best;
+}
+function rotAbout(pt,cx,cy,a){var c=Math.cos(a),s=Math.sin(a);var x=pt.x-cx,y=pt.y-cy;pt.x=cx+x*c-y*s;pt.y=cy+x*s+y*c;}
+// Kepler orbit: offset from the FOCUS (the parent body) for a subtle ellipse. M = mean anomaly (loops with time);
+// solving Kepler's equation makes the body swing faster at perihelion (near) and slower at aphelion (far). om = tilt.
+function kepOff(A,e,om,M){var E=M;for(var k=0;k<6;k++){E=E-(E-e*Math.sin(E)-M)/(1-e*Math.cos(E));}
+  var xp=A*(Math.cos(E)-e), yp=A*Math.sqrt(1-e*e)*Math.sin(E), c=Math.cos(om), s=Math.sin(om);
+  return {x:xp*c-yp*s, y:xp*s+yp*c};}
+// accent colour-merge: ramps the green toward blue as its edge nears the closest blue lobe (0 far, 1 touching).
+function accBlue(f){var d=params.size,nd=1e9;for(var q=0;q<3;q++){var g=Math.hypot(f[3].x-f[q].x,f[3].y-f[q].y)-f[q].r-f[3].r;if(g<nd)nd=g;}return clamp(1-nd/(0.45*d),0,1);}
+
+/* ============================ MOTIONS ============================
+   Each: {name,axis,prop,desc, dur, phases:[[label,ms]...], ch(t)->channels, custom(pose,t) optional} */
+var M=[];
+function add(m){M.push(m);}
+
+/* ---- Canonical (spec-exact, re-expressed on the grammar) ---- */
+add({id:'listening',axis:'Canonical',name:'Listening',prop:'scale · ease-in-out',
+  desc:'The held node breathes on the spot. A pure pulse, no connection to the cluster.',
+  accentSolo:true,
+  dur:2000,phases:[['expand',1000],['settle',1000]],
+  ch:function(t){return {scaleAcc:0.15*pulse01(t/2000)};}});
+
+add({id:'processing',axis:'Canonical',name:'Processing',prop:'bridge length · ease-in-out',
+  desc:'The forms connect and the bridge stretches, then the node detaches to a clean circle. Active work.',
+  dur:1400,phases:[['expand',700],['contract',700]],
+  ch:function(t){return {travel:lerp(-0.22,0.11,pulse01(t/1400))};}});
+
+add({id:'thinking',axis:'Canonical',name:'Thinking',prop:'length · ease-in-out',
+  desc:'The cluster stretches toward the held node, then relaxes. More thinking, more extension.',
+  dur:1500,phases:[['extend',350],['hold',150],['relax',400],['rest',600]],
+  ch:function(t){return {};},
+  custom:function(f,t){
+    var ext = t<350?eio(seg(t,0,350)) : t<500?1 : t<900?1-eio(seg(t,500,900)) : 0;
+    var i=2; // BR lobe reaches toward accent
+    f[i].x=lerp(f[i].x,f[3].x,0.42*ext); f[i].y=lerp(f[i].y,f[3].y,0.42*ext);
+    return f;
+  }});
+
+add({id:'responding',axis:'Canonical',name:'Responding',prop:'all three · ease-out',
+  desc:'The node travels in, the neck snaps, it takes the cluster colour. The only state that resolves.',
+  dur:2300,phases:[['arrive',500],['fuse',200],['release',200],['resolve',1400]],
+  ch:function(t){
+    if(t<500){var u=eo(t/500);return {travel:-0.661*u, fill:0.6*u};}
+    if(t<700){return {travel:-0.661, fill:1};}
+    if(t<900){var v=eo(seg(t,700,900));return {travel:-0.661*(1-v), fill:1-v};}
+    return {};
+  }});
+
+add({id:'orbit',axis:'Canonical',name:'Orbit',wide:true,prop:'position · linear · seamless',
+  desc:'The detached node circles the cluster and never joins. Continuous. Reads as attention.',
+  dur:4800,phases:[['orbit',4800]],
+  ch:function(t){return {orbit:TAU*(t/4800)};}});
+
+add({id:'fuse',axis:'Canonical',name:'Fuse & release',wide:true,prop:'position + fill · ease-in-out, ease-out',
+  desc:'The node rests at the mark, draws back, plunges in and fuses, then releases home. A task completing. Loops seamlessly.',
+  dur:3000,phases:[['hold',1250],['draw back',400],['fuse',450],['release',900]],
+  ch:function(t){
+    var tr;
+    if(t<1250) tr=0;                                                 // rest at the logo (¼d)
+    else if(t<1650) tr=0.30*eio(seg(t,1250,1650));                  // draw back (anticipation)
+    else if(t<2100) tr=lerp(0.30,-0.66,eio(seg(t,1650,2100)));      // plunge in and fuse
+    else tr=lerp(-0.66,0,eo(seg(t,2100,3000)));                     // release home (ends at rest = seamless)
+    return {travel:tr, fill:params.colourfuse?clamp(-tr/0.66,0,1):0};
+  }});
+
+/* ---- Postures (the body deforms: splay/tilt/spread/spin, then resolves) ---- */
+add({id:'nod',axis:'Postures',name:'Nod',prop:'spin · ease-out · twice, decaying',
+  desc:'Two dips, the second smaller, with a slight overshoot back past level. Agreement is a rhythm.',
+  dur:1600,phases:[['dip 1',500],['dip 2',400],['settle',700]],
+  ch:function(t){
+    var s=0;
+    if(t<500) s=-0.20*Math.sin(Math.PI*seg(t,0,500));
+    else if(t<900) s=-0.11*Math.sin(Math.PI*seg(t,500,900));
+    else s=0.03*Math.sin(Math.PI*seg(t,900,1600));
+    return {spin:s};
+  }});
+
+add({id:'shrug',axis:'Postures',name:'Shrug',prop:'splay + spin · ease-out, ease-in-out',
+  desc:'Arms open wide, the body lifts a little, it holds a beat too long, then drops. The pause makes it a shrug.',
+  dur:2200,phases:[['rise',600],['hold',900],['drop',400],['rest',300]],
+  ch:function(t){
+    var o=0,l=0;
+    if(t<600){o=eio(t/600);}
+    else if(t<1500){o=1;}
+    else if(t<1900){o=1-eio(seg(t,1500,1900));}
+    return {splay:0.5*o, scaleAll:0.04*o, spin:0.05*o};
+  }});
+
+add({id:'reach',axis:'Postures',name:'Reach',prop:'tilt + travel · ease-out',
+  desc:'One arm stretches toward the free node while the other draws in, and the node edges away. Asymmetry is the gesture.',
+  dur:1900,phases:[['reach',700],['hold',300],['return',900]],
+  ch:function(t){
+    var r=0;
+    if(t<700)r=eo(t/700); else if(t<1000)r=1; else r=1-eio(seg(t,1000,1900));
+    return {tilt:-0.5*r, travel:0.15*r};
+  }});
+
+/* removed: Brace (per comment — delete this version) */
+
+add({id:'unfurl',axis:'Postures',name:'Unfurl',prop:'splay + spread · slow ease-in-out',
+  desc:'Opens out of a tuck, overshoots, settles wider, then closes again. Slower than everything else. Waking up is not a fast thing.',
+  dur:2800,phases:[['open',1000],['settle',500],['close',1000],['rest',300]],
+  ch:function(t){
+    var sp,sy;
+    if(t<1000){var u=eio(t/1000);sp=lerp(0.86,1.13,u);sy=lerp(-0.22,0.42,u);}
+    else if(t<1500){var v=eio(seg(t,1000,1500));sp=lerp(1.13,1.06,v);sy=lerp(0.42,0.32,v);}
+    else if(t<2500){var w=eio(seg(t,1500,2500));sp=lerp(1.06,0.86,w);sy=lerp(0.32,-0.22,w);}
+    else {sp=0.86;sy=-0.22;}
+    // ease the tuck back to rest during the final rest window
+    if(t>=2500){var r=eio(seg(t,2500,2800));sp=lerp(0.86,1,r);sy=lerp(-0.22,0,r);}
+    return {spread:sp,splay:sy};
+  }});
+
+/* removed: Pivot (per comment — delete this version) */
+
+/* ---- Loops & variations (node mechanics) ---- */
+add({id:'baton',axis:'Loops',name:'Baton',wide:true,prop:'travel + spin · ease-in-out',
+  desc:'The node is taken in, the whole mark turns a third of a revolution, and a different lobe breaks out. Three passes.',
+  dur:3600,phases:[['pass 1',1200],['pass 2',1200],['pass 3',1200]],
+  ch:function(t){
+    var k=Math.floor(t/1200), lo=(t%1200)/1200;
+    var prog=(k+eio(lo))*TAU/3;
+    return {spin:prog, orbit:prog, travel:-1.0*Math.sin(Math.PI*lo), fill:0.7*Math.pow(Math.sin(Math.PI*lo),2)};
+  }});
+
+add({id:'containment',axis:'Loops',name:'Containment',prop:'orbit + travel · seamless',
+  desc:'A full orbit that never leaves the footprint. The node sinks into the body to cross and surfaces only in the three crooks.',
+  dur:3000,phases:[['orbit',3000]],
+  ch:function(t){
+    var ang=TAU*(t/3000);
+    var s=(1+Math.cos(3*ang))/2;             // 1 at three crooks, 0 between
+    return {orbit:ang, travel:-0.32-0.42*(1-s), fill:0.75*(1-s)};
+  }});
+
+add({id:'cartwheel',axis:'Loops',name:'Cartwheel',wide:true,prop:'spin + travel · linear · seamless',
+  desc:'The body rolls a full revolution underneath a node that holds its place. The node is swallowed and let go once per turn.',
+  dur:3200,phases:[['roll',3200]],
+  ch:function(t){
+    var sp=TAU*(t/3200);
+    var sw=Math.pow(Math.max(0,Math.sin(sp)),2);
+    return {spin:sp, travel:-0.8*sw, fill:0.6*sw};
+  }});
+
+/* removed: Shuttle (per comment) */
+
+/* removed: Bloom (per comment) */
+
+add({id:'pendulum',axis:'Loops',name:'Pendulum',prop:'gravity pendulum · nonlinear',
+  desc:'The node hangs from a pivot and swings under real gravity — nonlinear, lingering at the top of each arc where it slows and turns.',
+  dur:2400,phases:[['swing',1200],['swing',1200]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var st=env.st,dt=env.dt,d=params.size;
+    if(!st.i){st.i=1;st.a=1.15;st.w=0;}                 // start ~66deg, at rest
+    var g=9, L=1.5, steps=Math.max(1,Math.ceil(dt/0.006)), h=dt/steps;
+    for(var s=0;s<steps;s++){ st.w += -(g/L)*Math.sin(st.a)*h; st.a += st.w*h; }
+    var pvx=CX, pvy=CY-1.15*d, Lp=1.5*d;
+    f[3].x=pvx+Lp*Math.sin(st.a); f[3].y=pvy+Lp*Math.cos(st.a); f[3].blue=0;
+    return f;
+  }});
+
+/* ---- Loops: reference favourites, adapted to the Tempo mark ---- */
+// Orbit alt: the node rides the cluster's outline via a SOFT silhouette (log-sum-exp of each lobe's
+// reach), so hand-offs between lobes are smooth instead of kinked. accentSolo => always a clean circle.
+add({id:'orbit-transfer',axis:'Loops',name:'Orbit · transfer',prop:'orbit · constant clearance · seamless',accentSolo:true,
+  desc:"The node circles the cluster holding a constant gap from the nearest lobe edge the whole way round — in through the necks, out over the lobes. Never joins.",
+  dur:7000,phases:[['orbit',7000]],
+  ch:function(t){return {};},
+  custom:function(f,t){
+    var d=params.size, th=TAU*(t/7000), ux=Math.cos(th), uy=Math.sin(th);
+    var gr=d/2, G=0.18*d;                       // green radius; target constant edge-gap to nearest lobe
+    // binary search the radial distance so the MIN edge-clearance to the three lobes equals G
+    var lo=0.3*d, hi=3.2*d;
+    for(var it=0;it<26;it++){
+      var mid=(lo+hi)*0.5, gx=CX+ux*mid, gy=CY+uy*mid, minc=1e9;
+      for(var i=0;i<3;i++){var c=Math.hypot(gx-f[i].x,gy-f[i].y)-f[i].r-gr; if(c<minc)minc=c;}
+      if(minc>G) hi=mid; else lo=mid;
+    }
+    var dist=(lo+hi)*0.5;
+    f[3].x=CX+ux*dist; f[3].y=CY+uy*dist; f[3].blue=0;
+    return f;
+  }});
+
+// Orrery: nested orbits. b anchors the centre; a and c orbit b; the green node orbits c like a moon.
+add({id:'orrery',axis:'Loops',name:'Orrery',prop:'nested orbits · hierarchical',accentSolo:true,
+  desc:'A little solar system: one lobe anchors the centre, two lobes orbit it, and the green node orbits one of them like a moon. Seamless, resolves each loop.',
+  dur:6000,phases:[['orbit',6000]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, th=TAU*(t/6000);
+    var Ra=1.35*d, Rc=0.95*d, Rd=0.85*d;
+    var bx=CX, by=CY;                                              // b: anchor at centre
+    var ax=bx+Ra*Math.cos(th),      ay=by+Ra*Math.sin(th);        // a orbits b (1 rev)
+    var cx=bx+Rc*Math.cos(PI-th),   cy=by+Rc*Math.sin(PI-th);     // c orbits b (1 rev, opposite side)
+    var dx=cx+Rd*Math.cos(3*th),    dy=cy+Rd*Math.sin(3*th);      // d orbits c (3 rev) — the moon
+    f[0].x=ax; f[0].y=ay; f[0].r=d/2*0.78;                        // a
+    f[1].x=bx; f[1].y=by; f[1].r=d/2*0.85;                        // b (anchor)
+    f[2].x=cx; f[2].y=cy; f[2].r=d/2*0.78;                        // c
+    f[3].x=dx; f[3].y=dy; f[3].r=d/2*0.6; f[3].blue=0;            // d (green moon)
+    return f;
+  }});
+
+// Orrery · elliptical: nested orbits like Orrery, but a, c and the moon each ride a subtle ellipse
+// (parent at a focus) — a gentle perihelion/aphelion swing rather than perfect circles.
+add({id:'orrery-ellipse',axis:'Loops',name:'Orrery · elliptical',prop:'nested orbits · metaball merge',
+  desc:'The nested Orrery on subtle ellipses: a and c orbit the anchor and the green moon orbits c, each easing faster at perihelion and slower at aphelion.',
+  dur:6000,phases:[['orbit',6000]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, M=TAU*(t/6000), e=0.25;
+    var bx=CX, by=CY;                                            // b: anchor at centre
+    var oa=kepOff(1.30*d,e,0.0,  M);      var ax=bx+oa.x, ay=by+oa.y;   // a orbits b (1 rev)
+    var oc=kepOff(0.95*d,e,0.6,  M+PI);   var cx=bx+oc.x, cy=by+oc.y;   // c orbits b (1 rev, opposite side)
+    var od=kepOff(0.85*d,e,1.2,  3*M);    var dx=cx+od.x, dy=cy+od.y;   // d orbits c (3 rev) — the moon
+    f[0].x=ax; f[0].y=ay; f[0].r=d/2*0.78;
+    f[1].x=bx; f[1].y=by; f[1].r=d/2*0.85;
+    f[2].x=cx; f[2].y=cy; f[2].r=d/2*0.78;
+    f[3].x=dx; f[3].y=dy; f[3].r=d/2*0.6; f[3].blue=accBlue(f);   // merges + tints toward blue near a lobe
+    return f;
+  }});
+
+// Chain: a strict orbital chain a>b>c>d. a anchors the centre, b orbits a, c orbits b, d orbits c.
+// Each link swings around the one before it (nested epicycles) — no two share a parent.
+add({id:'chain',axis:'Loops',name:'Chain',prop:'orbital chain · metaball merge',seqBlur:20,seqA:22,
+  desc:'A strict chain: one lobe anchors the centre, the next orbits it, the next orbits that, and the green node orbits the last. Each link swings around the one before it.',
+  dur:6000,phases:[['orbit',6000]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, th=TAU*(t/6000);
+    var Rb=0.9*d, Rc=0.78*d, Rd=0.75*d;
+    var bx=CX+Rb*Math.cos(th),      by=CY+Rb*Math.sin(th);   // b orbits the centre anchor (1 rev)
+    var cx=bx+Rc*Math.cos(-2*th),   cy=by+Rc*Math.sin(-2*th);// c orbits b   (2 rev, opposite)
+    var dx=cx+Rd*Math.cos(3*th),    dy=cy+Rd*Math.sin(3*th); // d orbits c   (3 rev) — end of chain
+    // anchor a stays central but is tugged slightly toward the mass of the moving links, with a faint wobble
+    var cmx=(bx+cx+dx)/3-CX, cmy=(by+cy+dy)/3-CY, cl=env.clock;
+    var ax=CX + cmx*0.06 + Math.sin(cl*1.7)*0.03*d;
+    var ay=CY + cmy*0.06 + Math.cos(cl*1.3)*0.03*d;
+    f[0].x=ax; f[0].y=ay; f[0].r=d/2*0.72;                   // a (anchor — drifts + wobbles)
+    f[1].x=bx; f[1].y=by; f[1].r=d/2*0.72;                   // b
+    f[2].x=cx; f[2].y=cy; f[2].r=d/2*0.72;                   // c
+    f[3].x=dx; f[3].y=dy; f[3].r=d/2*0.58; f[3].blue=0;      // d: the green node stays green — the goo blends
+    return f;                                                //    green<->blue naturally at each contact (like Reveal)
+  }});
+
+// Chain · elliptical: the a>b>c>d chain, but every link rides a subtle ellipse with its parent at a focus,
+// so each swings a little faster at perihelion and slower at aphelion.
+add({id:'chain-ellipse',axis:'Loops',name:'Chain · elliptical',prop:'Kepler chain · metaball merge',
+  desc:'The a›b›c›d chain on subtle ellipses instead of circles: each link sits at its parent’s focus, easing faster through perihelion and slower at aphelion.',
+  dur:6000,phases:[['orbit',6000]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, M=TAU*(t/6000), e=0.25;
+    var ax=CX, ay=CY;                                            // a: anchor
+    var ob=kepOff(0.80*d,e,0.0,   M);   var bx=ax+ob.x, by=ay+ob.y;   // b orbits a (1 rev)
+    var oc=kepOff(0.68*d,e,0.9, -2*M);  var cx=bx+oc.x, cy=by+oc.y;   // c orbits b (2 rev, opposite)
+    var od=kepOff(0.66*d,e,1.8,  3*M);  var dx=cx+od.x, dy=cy+od.y;   // d orbits c (3 rev) — end of chain
+    f[0].x=ax; f[0].y=ay; f[0].r=d/2*0.72;
+    f[1].x=bx; f[1].y=by; f[1].r=d/2*0.72;
+    f[2].x=cx; f[2].y=cy; f[2].r=d/2*0.72;
+    f[3].x=dx; f[3].y=dy; f[3].r=d/2*0.58; f[3].blue=accBlue(f);   // merges + tints toward blue near a lobe
+    return f;
+  }});
+
+// Reveal: the mark forms from a single point — four forms burst out of one origin into orbit, then
+// settle into the logo and stop. The ONLY motion that does not begin at rest (use it for first paint).
+add({id:'reveal',axis:'Loops',name:'Reveal',prop:'formation · point → orbit → logo',
+  desc:'The mark forms from a single point: four forms burst out of one origin into orbit, then settle into the logo and stop. The only motion that does not begin at rest — first paint / session start.',
+  dur:2800,phases:[['spark',420],['orbit',1400],['settle',980]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, R=restPose(), DUR=2800;
+    var p=clamp(t/DUR,0,1), e=eio(p);
+    // ONE simple orbit: the four forms rise from the seed point onto a ring, make a single decelerating
+    // revolution together (one frequency, evenly spaced — never chaotic), then spiral into the logo.
+    var grow  = eio(clamp(p/0.5,0,1));         // point -> ring over the first half (zero velocity at the seam)
+    var settle= eio(clamp((p-0.5)/0.5,0,1));   // ring -> logo over the second half (zero velocity at p=1)
+    var spin  = eo(p)*TAU;                      // one clean revolution, decelerating into the settle
+    var spark = eo(clamp(t/420,0,1));          // seed dot fades/scales in
+    var ringR = 1.18*d*grow, f8=0.72, depthAmp=0.4;  // f8: how much the orbit bows into a figure-8; depthAmp: near/far size cue
+    for(var i=0;i<4;i++){
+      var ang=i*(TAU/4)+spin;                                       // four forms evenly spaced on the path
+      var ux=Math.cos(ang);
+      var uy=lerp(Math.sin(ang), Math.sin(ang)*Math.cos(ang)*1.6, f8); // blend circle -> Gerono lemniscate
+      var rx=CX+ux*ringR, ry=CY+uy*ringR;
+      f[i].x=lerp(rx, R[i].x, settle); f[i].y=lerp(ry, R[i].y, settle);
+      var dep=1+depthAmp*Math.sin(ang)*(1-settle);                  // depth: forms toward the viewer grow, away shrink (gone by the settle)
+      f[i].r=lerp(d*0.46, R[i].r, e)*(0.55+0.45*spark)*dep;
+      f[i].blue=0;
+    }
+    return f;
+  }});
+
+// Pulse: whole-mark heartbeat. Accent is solo so it pulses without ever joining.
+add({id:'pulse',axis:'Loops',name:'Pulse',prop:'scale · double thump',accentSolo:true,
+  desc:'The whole mark pulses, a double heartbeat, then rests. Size, not travel. Nothing joins.',
+  dur:1800,phases:[['thump',250],['thump',250],['rest',1300]],
+  ch:function(t){var s=0;if(t<250)s=Math.sin(Math.PI*seg(t,0,250));else if(t<500)s=0.7*Math.sin(Math.PI*seg(t,250,500));return {scaleAll:0.09*s};}});
+
+// Torn: pulled apart until the necks thin and tear, then snaps back whole (clean snap).
+add({id:'torn',axis:'Loops',name:'Torn',prop:'spread · anticipation + elastic snap',
+  desc:'The cluster tucks in (anticipation), pulls apart with building inertia until the necks tear, then snaps back with an elastic overshoot before settling.',
+  dur:2200,phases:[['anticipate',250],['pull',700],['tear',200],['reform',550],['rest',500]],
+  ch:function(t){
+    var sp;
+    if(t<250) sp=1-0.12*eo(seg(t,0,250));                     // anticipation: tuck in before the pull
+    else if(t<950) sp=lerp(0.88,1.78,ei(seg(t,250,950)));     // pull apart, accelerating (inertia)
+    else if(t<1150) sp=1.78;                                  // held at the tear
+    else if(t<1700) sp=1+0.78*(1-eob(seg(t,1150,1700)));      // elastic snap back, overshoots past rest
+    else sp=1;                                                // settle
+    return {spread:sp};
+  }});
+
+// Waiting · swap: the mark pulls apart with a dramatic pop, the green node and one blue lobe trade places
+// around their shared midpoint, then it springs back into the logo. Starts and ends exactly at rest so it
+// seams cleanly in the sequence.
+add({id:'waitswap',axis:'Loops',name:'Waiting · relay',
+  desc:'The mark opens, the green node and a blue lobe arc together and merge; the green passes to the lobe, which carries it out to the node position while the former node settles back as a blue lobe. The accent handed to a new form — no snap-back.',
+  dur:3000,phases:[['separate',1050],['orbit + merge',900],['reform',1050]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, R=restPose(), DUR=3000, p=clamp(t/DUR,0,1);
+    var mc=markCols(params), cluster=mc.cluster, accent=mc.duotone?BRAND.green:cluster;
+    // ONE continuous flow: sep eases the pair apart and back (peaks at the middle); the 180deg orbit is
+    // eio-paced so most of the turn happens right at max separation; both are smooth, so there is no pause.
+    var A=R[3], B=R[2];                                          // node rest pos, br-lobe rest pos
+    var M0x=(A.x+B.x)/2, M0y=(A.y+B.y)/2;
+    var hvx=(A.x-B.x)/2, hvy=(A.y-B.y)/2, hL=Math.hypot(hvx,hvy)||1, ux=hvx/hL, uy=hvy/hL;
+    var odx=M0x-CX, ody=M0y-CY, oL=Math.hypot(odx,ody)||1; odx/=oL; ody/=oL;
+    var sep = Math.pow(Math.sin(PI*p),1.25);                    // 0 ->1 ->0, smooth, no plateau
+    var rot = eio(p)*PI;                                        // 0 -> 180deg swap, concentrated at max separation
+    var xfer= eio(clamp((p-0.30)/0.40,0,1));                    // colour handoff across the merged rotation
+    var rr  = lerp(hL, 0.46*d, sep);                            // pair draws together to a merge-neck at the peak (still two distinct dots)
+    var Mx  = M0x + odx*(0.5*d*sep), My = M0y + ody*(0.5*d*sep);// whole pair drifts outward as it opens
+    var c=Math.cos(rot), s=Math.sin(rot), rx=(ux*c-uy*s)*rr, ry=(ux*s+uy*c)*rr;   // orbit the pair about its centre
+    f[3].x=Mx+rx; f[3].y=My+ry; f[3].r=R[3].r; f[3].col=mix(accent,cluster,xfer); // green -> blue, ends at lobe pos
+    f[2].x=Mx-rx; f[2].y=My-ry; f[2].r=R[2].r; f[2].col=mix(cluster,accent,xfer); // blue -> green, ends at node pos
+    // the other two lobes ease outward with the same separation curve, so the whole mark breathes as one
+    [0,1].forEach(function(i){ var vx=R[i].x-CX, vy=R[i].y-CY, L=Math.hypot(vx,vy)||1;
+      f[i].x=R[i].x+vx/L*(0.24*d*sep); f[i].y=R[i].y+vy/L*(0.24*d*sep); f[i].r=R[i].r; f[i].col=cluster; });
+    return f;
+  }});
+
+// Figure 8: two counter-rotating strands braid along a lemniscate — they weave around each other at the
+// crossing (one lifts, one drops) instead of tracing mirrored halves. Genuine over/under interlace.
+add({id:'figure8',axis:'Loops',name:'Figure 8',prop:'lemniscate · counter-braid',
+  desc:'Two strands run the figure-eight in opposite directions and weave around each other at the crossing — one passes over, one under — instead of mirroring.',
+  dur:4200,phases:[['weave',4200]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var c=env.clock*1.3, d=params.size, k=1.55*d, ys=1.45, sig=0.5*d, amp=0.58*d;
+    // Gerono figure-eight: even speed, crisp shape, single self-crossing at centre.
+    function pos(a){return {x:CX+k*Math.cos(a), y:CY+k*ys*Math.sin(a)*Math.cos(a)};}
+    for(var i=0;i<4;i++){
+      var a=c+i*(PI/2);                                   // four beads flowing the same way, a quarter-lap apart
+      var p=pos(a), p2=pos(a+0.012);
+      var vx=p2.x-p.x, vy=p2.y-p.y, vl=Math.hypot(vx,vy)||1;
+      var dcx=p.x-CX, g=Math.exp(-(dcx*dcx)/(sig*sig));   // only near the crossing
+      // displace perpendicular to travel: beads arriving on opposite branches get opposite offsets => over/under braid
+      f[i].x=p.x+(-vy/vl)*amp*g; f[i].y=p.y+(vx/vl)*amp*g; f[i].r=d/2*0.72; f[i].blue=0;
+    }
+    return f;
+  }});
+
+// Hierarchical: the three lobes swell in turn, then the node answers.
+add({id:'hierarchy',axis:'Loops',name:'Hierarchical',prop:'scale · sequential · musical',
+  desc:'The three lobes swell in turn on a steady beat, then the node lands the downbeat with a bigger accent. A signal passing down the chain, in time.',
+  dur:2400,phases:[['beat 1',440],['beat 2',440],['beat 3',440],['downbeat',700],['rest',380]],
+  ch:function(t){return {};},
+  custom:function(f,t){
+    // four beats (lobe, lobe, lobe, node) on a steady rhythm; sine-squared swell = soft musical attack/decay;
+    // the node is the accented downbeat — bigger and slightly late. Clean and in time.
+    var B=[[0,560,0.20],[440,1000,0.20],[880,1440,0.20],[1320,2120,0.42]];
+    for(var i=0;i<4;i++){ var u=seg(t,B[i][0],B[i][1]), s=Math.sin(PI*u); f[i].r*=1+B[i][2]*s*s; }
+    return f;
+  }});
+
+/* ---- Complete · concepts: top-down SQUARE-DANCE figures. The four "dancers" step between clean
+   formations with brief holds (precise) and eased walks between (musical), then resolve into the logo.
+   Each starts and ends exactly at the rest mark, so any one can drop into the Complete slot. ---- */
+function sqStep(p, KF, bow){                              // stepped keyframe walk: eio between formations, hold where P repeats
+  bow=bow||0;                                            // bow>0 swirls each step around the set centre (do-si-do feel)
+  if(p<=KF[0].t) return KF[0].P;
+  for(var i=0;i<KF.length-1;i++){ if(p<=KF[i+1].t){ var span=(KF[i+1].t-KF[i].t)||1, w=eio((p-KF[i].t)/span);
+    var a2=bow*Math.sin(PI*w), c=Math.cos(a2), s=Math.sin(a2);            // curve peaks mid-transition
+    return KF[i].P.map(function(a,k){var b=KF[i+1].P[k];
+      var x=lerp(a[0],b[0],w), y=lerp(a[1],b[1],w), vx=x-CX, vy=y-CY;
+      return [CX+vx*c-vy*s, CY+vx*s+vy*c]; }); } }
+  return KF[KF.length-1].P;
+}
+function sqApply(f,R,P){ for(var i=0;i<4;i++){ f[i].x=P[i][0]; f[i].y=P[i][1]; f[i].r=R[i].r; f[i].blue=0; } return f; }
+function sqCorners(S){ return [[CX-S,CY-S],[CX+S,CY-S],[CX+S,CY+S],[CX-S,CY+S]]; }   // dancer i at corner i (TL,TR,BR,BL)
+
+// A) Grand Square — the set breathes: form a square, draw inward to a tight diamond, swing back out a
+//    quarter-turned, and resolve. The classic grand-square floor pattern.
+add({id:'complete-grandsquare',axis:'Complete',name:'Grand Square',prop:'formation walk · breathe + turn',
+  desc:'A grand square from above: the four walk out into a square, draw inward to a tight diamond, swing back out a quarter-turned, and resolve into the logo — stepped walks with crisp holds.',
+  dur:3600,phases:[['form',640],['draw in',700],['out + turn',760],['hold',480],['resolve',1020]],
+  ch:function(t){return {};},
+  custom:function(f,t){
+    var R=restPose(), p=clamp(t/3600,0,1), S=0.92*params.size;
+    var rest=R.map(function(o){return [o.x,o.y];}), C=sqCorners(S);
+    var Din=C.map(function(c){return [CX+(c[0]-CX)*0.36, CY+(c[1]-CY)*0.36];});     // draw inward (tight diamond)
+    var Crot=[C[1],C[2],C[3],C[0]];                                                  // back out, quarter-turned
+    var KF=[{t:0,P:rest},{t:0.20,P:C},{t:0.26,P:C},{t:0.48,P:Din},{t:0.68,P:Crot},{t:0.76,P:Crot},{t:1,P:rest}];
+    return sqApply(f,R,sqStep(p,KF,0.45));
+  }});
+
+// B) Pass-Thru — partners cross the set through the centre to the opposite corners and back, crossing
+//    cleanly at the middle each time. The iconic square-dance pass-through.
+add({id:'complete-passthru',axis:'Complete',name:'Pass-Thru',prop:'cross the set · through centre',
+  desc:'The four walk out into a square, pass through the centre to the opposite corners, then pass back — crossing at the middle each time — and resolve into the logo.',
+  dur:3400,phases:[['form',560],['pass',720],['hold',360],['pass back',720],['resolve',1040]],
+  ch:function(t){return {};},
+  custom:function(f,t){
+    var R=restPose(), p=clamp(t/3400,0,1), S=0.92*params.size;
+    var rest=R.map(function(o){return [o.x,o.y];}), C=sqCorners(S);
+    var Cx=[C[2],C[3],C[0],C[1]];                                                    // each to the opposite corner
+    var KF=[{t:0,P:rest},{t:0.18,P:C},{t:0.24,P:C},{t:0.46,P:Cx},{t:0.54,P:Cx},{t:0.76,P:C},{t:1,P:rest}];
+    return sqApply(f,R,sqStep(p,KF,0.7));                                            // bigger bow => dancers circle each other (do-si-do) instead of passing through
+  }});
+
+// C) Promenade — circle the square: the four walk around the perimeter corner to corner, all the way
+//    round, then resolve. A promenade seen from above.
+// Shared promenade engine: the four ride a CONTINUOUSLY rotating + breathing ring (never resting), with
+// do-si-do twirls layered on (each a 360deg orbit about the pair midpoint, so it returns cleanly to the
+// flow). Scaling: forms grow when the ring expands and shrink when it contracts; the outer dot of a twirl
+// grows. `twirls` = [ [ [a,b], t0, t1 ], ... ]. Enters from the logo and resolves back to it.
+// Square-dance PROMENADE: the four walk continuously around a SQUARE (along its edges, turning the corners),
+// never resting; the square breathes (contract/expand) in time with the walk; forms scale with it. Blooms
+// cleanly out of the logo and back (angle maps circle->square as it opens, so no cross-flip). `twirls` layer
+// do-si-dos on top. This is the structural rhythm the earlier square version had, now always in flow.
+function promenade(f, t, DUR, twirls){
+  var R=restPose(), d=params.size, p=clamp(t/DUR,0,1);
+  var pol=R.map(function(o){return {a:Math.atan2(o.y-CY,o.x-CX), r:Math.hypot(o.x-CX,o.y-CY)};});
+  var expand=Math.min(eio(clamp(p/0.20,0,1)), eio(clamp((1-p)/0.20,0,1)));   // clean bloom in/out
+  var rot=TAU*eio(p);                                            // ONE calm lap, monotonic (no whip, no reversal)
+  var breathe=0.5-0.5*Math.cos(TAU*p*2);                        // two gentle breaths over the walk (time-based => smooth, not spastic)
+  var Rsq=lerp(0.74*d, 1.0*d, breathe);
+  var sqn=0.62;                                                  // rounded square — reads square but moves smoothly (no corner jerks)
+  var pos=[], scl=[1,1,1,1];
+  for(var i=0;i<4;i++){
+    var a=pol[i].a + rot;                                       // keep walking the same way; a whole turn lands back on the logo
+    var rad=lerp(pol[i].r, Rsq, expand);
+    var cx0=Math.cos(a), sy0=Math.sin(a), m=Math.max(Math.abs(cx0),Math.abs(sy0))||1;
+    var dx=lerp(cx0, cx0/m, expand*sqn), dy=lerp(sy0, sy0/m, expand*sqn);   // circle(logo) -> rounded SQUARE(promenade)
+    pos.push([CX+dx*rad, CY+dy*rad]);
+  }
+  var bscale=0.88+0.24*breathe;                                  // (1) expand => bigger, contract => smaller (gentle)
+  (twirls||[]).forEach(function(tw){ var q=clamp((p-tw[1])/(tw[2]-tw[1]),0,1); if(q<=0||q>=1) return;
+    var a=tw[0][0], b=tw[0][1], mx=(pos[a][0]+pos[b][0])/2, my=(pos[a][1]+pos[b][1])/2;
+    var ang=TAU*eio(q), c=Math.cos(ang), s=Math.sin(ang);       // 360deg do-si-do (returns to the flow)
+    function rp(pt){var vx=pt[0]-mx,vy=pt[1]-my;return [mx+vx*c-vy*s, my+vx*s+vy*c];}
+    pos[a]=rp(pos[a]); pos[b]=rp(pos[b]);
+    var da=Math.hypot(pos[a][0]-CX,pos[a][1]-CY), db=Math.hypot(pos[b][0]-CX,pos[b][1]-CY);
+    var g=0.34*Math.sin(PI*q); if(da>=db) scl[a]+=g; else scl[b]+=g;   // (2) outer dot of the twirl grows
+  });
+  for(var i=0;i<4;i++){ f[i].x=pos[i][0]; f[i].y=pos[i][1]; f[i].r=R[i].r*lerp(1, bscale*scl[i], expand); f[i].blue=0; }
+  return f;
+}
+
+// Promenade — continuous rotating/breathing ring with one do-si-do twirl. Never comes to rest mid-figure.
+add({id:'complete-promenade',axis:'Complete',name:'Promenade',prop:'rotate + breathe · one twirl',
+  desc:'The four ride a continuously rotating, breathing ring — never truly resting — growing as it expands and shrinking as it contracts; partway round the green dancer and a neighbour do-si-do, the outer one swelling, then it flows on and resolves into the logo.',
+  dur:4600,phases:[['enter',760],['rotate + breathe',1600],['do-si-do',1000],['flow + resolve',1240]],
+  ch:function(t){return {};},
+  custom:function(f,t){ return promenade(f,t,4600,[ [[3,0],0.42,0.70] ]); }});
+
+// Promenade · cascade — same rotating/breathing ring, but three do-si-do twirls fire in rapid succession
+// around the ring (0-1, 1-2, 2-3), a wave of spins passing from one dancer to the next.
+add({id:'complete-promenade2',axis:'Complete',name:'Promenade · cascade',prop:'rotate + breathe · 3 twirls',
+  desc:'The continuously rotating, breathing ring with a rapid cascade of three do-si-do twirls passing from one dancer to the next around the ring — the outer dot of each swelling — then it resolves into the logo.',
+  dur:4800,phases:[['enter',760],['rotate + breathe',1040],['cascade ×3',1800],['flow + resolve',1200]],
+  ch:function(t){return {};},
+  custom:function(f,t){ return promenade(f,t,4800,[ [[0,1],0.32,0.50], [[1,2],0.48,0.66], [[2,3],0.64,0.82] ]); }});
+
+// D) Victory (8-pulse): a pulse travels around the mark twice — eight beats accelerating in tempo — and
+//    the last beat lands on the green node as a victory: it swells big and the whole mark pops.
+add({id:'complete-victory',axis:'Complete',name:'Victory · 8-pulse',prop:'pulse ×8 · two laps · accelerando',
+  desc:'A pulse circles the mark twice — eight beats that speed up (accelerando) — then, after a held breath, the final beat lands on the green node as a victory: it swells big and the whole mark pops.',
+  dur:2800,phases:[['pulse wind-up',1620],['release · spin 360',1180]],
+  ch:function(t){return {};},
+  custom:function(f,t){
+    var R=restPose(), d=params.size, p=clamp(t/2800,0,1);
+    var th=[0,1,2,3].map(function(i){return Math.atan2(R[i].y-CY,R[i].x-CX);});
+    // The pulses wind the WHOLE cluster up (an accelerating rotational creep); the final pulse releases that
+    // momentum into a full 360deg spin that eases out and settles upright on the logo.
+    var theta=TAU*( 0.18*Math.pow(clamp(p/0.62,0,1),2.0) + 0.82*eo(clamp((p-0.58)/0.42,0,1)) );
+    var cs=Math.cos(theta), sn=Math.sin(theta);
+    // the "pulsing": an accelerating mass sweeps the ring during the wind-up, swelling each form it passes
+    var u=clamp(p/0.60,0,1), phi=th[3]+3*TAU*Math.pow(u,2.2), speed=Math.pow(u,1.2);
+    var ramp=clamp(p/0.05,0,1), waveFade=1-clamp((p-0.56)/0.08,0,1);
+    var vu=clamp((p-0.58)/0.42,0,1), vs=Math.sin(PI*vu); vs=vs*vs;                    // final pulse -> victory swell, over the spin
+    var gx=(R[0].x+R[1].x+R[2].x+R[3].x)/4, gy=(R[0].y+R[1].y+R[2].y+R[3].y)/4;       // the mark's centre of gravity
+    for(var i=0;i<4;i++){
+      var vx=R[i].x-gx, vy=R[i].y-gy, x=gx+vx*cs-vy*sn, y=gy+vx*sn+vy*cs;             // spin the cluster about its own centroid (in place)
+      f[i].x=x; f[i].y=y;
+      var ai=th[i]+theta, dth=phi-ai; dth=Math.atan2(Math.sin(dth),Math.cos(dth));
+      var prox=Math.exp(-Math.pow(dth/0.75,2))*ramp*waveFade;
+      f[i].r=R[i].r*(1+(0.14+0.45*speed)*prox);
+      f[i].blue=0;
+    }
+    f[3].r*=1+0.50*vs; for(var j=0;j<4;j++) f[j].r*=1+0.14*vs;                        // green node erupts + whole-mark pop
+    return f;
+  }});
+
+// Cascade: real juggling — the four forms are tossed hand to hand on parabolic arcs, crossing in the middle.
+add({id:'cascade',axis:'Loops',name:'Cascade',prop:'travel · parabolic toss · seamless',
+  desc:'The four forms are juggled in crossing parabolic arcs, tossed hand to hand under gravity.',
+  dur:2400,phases:[['juggle',2400]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, Ap=1.15*d, H=0.5*d, baseY=CY+0.55*d, wj=0.8, c=env.clock;
+    for(var i=0;i<4;i++){
+      var cyc=c*wj + i*0.5, k=Math.floor(cyc), tt=cyc-k, dir=(k%2===0)?1:-1;
+      var fx=CX+(dir>0?-H:H), tox=CX+(dir>0?H:-H);
+      f[i].x=fx+(tox-fx)*tt; f[i].y=baseY-4*Ap*tt*(1-tt); f[i].r=d/2*0.9; f[i].blue=0;
+    }
+    return f;
+  }});
+
+// Sling: the node is a particle under the gravity of the three lobes — orbits one, gets slung to the next.
+add({id:'sling',axis:'Loops',name:'Sling',prop:'contour hug · constant gap',accentSolo:true,
+  desc:'The node hugs one lobe’s edge, then is handed to the next, tracing the cluster outline at a fixed clearance. Never touches.',
+  dur:4200,phases:[['hand-off',4200]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    // Trace the outer boundary of the three lobes' clearance circles, swept from the cluster centroid.
+    // On each lobe's arc the node sits exactly (lobe.r + gap + node.r) from that lobe => min clearance == gap, always.
+    var d=params.size, gap=0.16*d, gr=f[3].r;
+    var ox=(f[0].x+f[1].x+f[2].x)/3, oy=(f[0].y+f[1].y+f[2].y)/3;   // centroid: interior to every clearance circle
+    var th=TAU*(t/4200), ux=Math.cos(th), uy=Math.sin(th);
+    var best=0;
+    for(var i=0;i<3;i++){
+      var R=f[i].r+gap+gr, wx=ox-f[i].x, wy=oy-f[i].y;
+      var b=wx*ux+wy*uy, c=wx*wx+wy*wy-R*R, disc=b*b-c;          // O inside circle => disc>0, one outward root
+      if(disc<0) continue;
+      var s=-b+Math.sqrt(disc);
+      if(s>best) best=s;                                          // farthest circle wins => outer contour
+    }
+    f[3].x=ox+ux*best; f[3].y=oy+uy*best; f[3].blue=0;
+    return f;
+  }});
+
+// Stride: arms alternate like a walk while the body bobs. In place, seamless.
+add({id:'stride',axis:'Loops',name:'Stride',prop:'walk cycle · turning swagger',
+  desc:'Four steps that do not repeat in lockstep: the body strides while a slow turn, lean and shoulder roll drift across the longer cycle, and the node sways with it.',
+  dur:2800,phases:[['step',700],['step',700],['step',700],['step',700]],
+  ch:function(t){
+    var w=TAU*(t/1400);        // step cadence: 2 steps per 1400ms
+    var m=TAU*(t/2800);        // slow modulator over the whole 4-step loop
+    return {
+      tilt:0.60*Math.sin(w),
+      spin:0.13*Math.sin(w) + 0.11*Math.sin(m),          // gentle turn drift, so no two steps look identical
+      splay:0.13*Math.sin(2*w) + 0.10*Math.sin(m-0.5),   // shoulder roll varies across the loop
+      scaleAll:0.05*(1-Math.cos(2*w)),
+      bodyDY:-0.07*Math.abs(Math.sin(w)) - 0.03*Math.sin(m),
+      orbit:0.20*Math.sin(m),                            // the node sways over the long cycle
+      travel:0.10*Math.sin(m)                            // slight lean in/out
+    };
+  }});
+
+// Cradle: a continuous Newton's cradle — the four forms hang in a row and the end balls swing,
+// passing momentum (and colour) back and forth through the chain. It loops forever; the sequence's
+// outro is what resolves it to the rest mark. No internal reforming.
+add({id:'cradle',axis:'Loops',name:'Cradle',prop:"Newton's cradle · continuous",
+  desc:"A Newton's cradle: an end ball swings in, the impact passes through the row, and the opposite ball swings out — over and over. The accent colour travels through the chain with the momentum. Continuous loop; resolves to the mark only on the way out.",
+  dur:2200,phases:[['swing',1100],['swing',1100]],
+  // Custom sequence intro: instead of a flat crossfade, the four forms peel off the logo one after another,
+  // arc across, and drop into the hanging row with a soft settle — a more flowing "assembling the cradle".
+  seqIntro:function(REST, mp, w){
+    var d=params.size, out=[], stag=0.1;                // gentle stagger — purposeful, not a cascade
+    for(var i=0;i<4;i++){
+      var wi=clamp((w - i*stag)/(1 - stag*3), 0, 1);    // each ball runs its own sub-window
+      var e=eob(wi);                                     // ease-out-back: playful settle with a small overshoot
+      var x=lerp(REST[i].x, mp[i].x, e), y=lerp(REST[i].y, mp[i].y, e);
+      y -= Math.sin(PI*wi)*0.16*d;                       // gentle bow along a fairly direct path into the lineup
+      out.push({x:x, y:y, r:lerp(REST[i].r, mp[i].r, e), blue:0, col:null});
+    }
+    return out;
+  },
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var st=env.st, dt=env.dt, d=params.size;
+    if(!st.i){st.i=1;st.side='L';st.st=0;st.gp=0;}   // gp = green "energy" position along the chain (0..3)
+    var pivotY=CY-1.35*d, L=1.55*d, thMax=0.6, sp=0.98*d;
+    var bx=[CX-1.5*sp,CX-0.5*sp,CX+0.5*sp,CX+1.5*sp];
+    st.st+=dt/0.55;
+    if(st.st>=1){ st.st-=1; st.side=(st.side==='L')?'R':'L'; }   // one end swings out-and-back per half; alternate. seamless (a=0 at the boundary)
+    var a=Math.sin(PI*Math.min(st.st,1))*thMax;
+    for(var i=0;i<4;i++){ var ai=0; if(i===0&&st.side==='L')ai=-a; if(i===3&&st.side==='R')ai=a;
+      f[i].x=bx[i]+L*Math.sin(ai); f[i].y=pivotY+L*Math.cos(ai); f[i].r=d/2*0.9; f[i].blue=0; }
+    // momentum-carrying colour: the green "energy" slides through the chain to the active end, passing
+    // through the middle balls at each collision. Mono => accent == cluster, so nothing visible moves.
+    var mcC=markCols(params), accCol=mcC.duotone?BRAND.green:mcC.cluster;
+    var target=(st.side==='L')?0:3, dpos=(3/0.10)*dt;                        // sweep the full chain in ~0.10s
+    if(Math.abs(target-st.gp)<=dpos) st.gp=target; else st.gp+=(target>st.gp?1:-1)*dpos;
+    for(var ci=0;ci<4;ci++){ var w=clamp(1-Math.abs(ci-st.gp)/1.25,0,1); f[ci].col=mix(mcC.cluster,accCol,w); }
+    return f;
+  }});
+
+// Tug of war: strain builds slowly (with tremble), the grip gives with a back-easing snap, the side flips.
+add({id:'tugofwar',axis:'Loops',name:'Tug of war',prop:'travel + tilt · strain, give',
+  desc:'The node and the cluster pull against each other. Strain builds slowly with a tremble, the grip gives with a snap, and the winning side flips.',
+  dur:2200,phases:[['strain',1400],['give',300],['strain',1400],['give',300]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var st=env.st, dt=env.dt, d=params.size;
+    if(!st.i){st.i=1;st.ph='strain';st.t=0;st.side=1;}
+    if(st.ph==='strain'){st.t+=dt/1.25; if(st.t>=1){st.ph='give';st.t=0;}}
+    else {st.t+=dt/0.30; if(st.t>=1){st.ph='strain';st.t=0;st.side=-st.side;}}
+    var sn = st.ph==='strain'? ei(Math.min(st.t,1)) : (1-eob(Math.min(st.t,1)));
+    var g=P({travel:0.5*sn, tilt:-0.5*sn, spin:st.side*0.06*sn});
+    var jit = sn*(st.ph==='strain'?1:0.25);
+    for(var i=0;i<4;i++){ g[i].x+=rnd()*jit*d*0.05; g[i].y+=rnd()*jit*d*0.05; }
+    return g;
+  }});
+
+// Catapult: cluster winds back with the node loaded, flings it, node flies a real ballistic arc under gravity.
+add({id:'catapult',axis:'Loops',name:'Catapult',prop:'arm + ballistic · fling, bounce, return',
+  desc:'The cluster winds back, flings the node on a ballistic arc, it bounces once on landing, then springs smoothly back to the loaded start — a seamless loop.',
+  dur:2600,phases:[['wind',800],['release',200],['fly',900],['return',700]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var st=env.st, dt=env.dt, d=params.size;
+    if(!st.i){st.i=1;st.ph='load';st.t=0;st.armA=0.5;st.px=0;st.py=0;st.pvx=0;st.pvy=0;}
+    var bx=CX-0.35*d, by=CY+0.5*d, La=1.5*d, tl=0;
+    if(st.ph==='load'){st.t+=dt/0.8; var u=eio(Math.min(st.t,1)); st.armA=lerp(0.5,-0.6,u); tl=-0.28*u; if(st.t>=1){st.ph='release';st.t=0;}}
+    else if(st.ph==='release'){st.t+=dt/0.18; var v=eo(Math.min(st.t,1)); st.armA=lerp(-0.6,1.7,v); tl=lerp(-0.28,0.12,v);
+      if(st.t>=1){st.ph='fly';st.t=0; st.px=bx+La*Math.cos(st.armA); st.py=by-La*Math.sin(st.armA); st.pvx=2.7*d; st.pvy=-4.6*d;}}
+    else if(st.ph==='fly'){
+      st.pvy+=11.5*d*dt; st.px+=st.pvx*dt; st.py+=st.pvy*dt; st.t+=dt/1.2; tl=lerp(0.12,0,Math.min(st.t,1));
+      if(st.py>=by){ st.py=by;
+        if(st.pvy>1.6*d && !st.bounced){ st.pvy=-st.pvy*0.45; st.pvx*=0.6; st.bounced=1; }  // one ground bounce
+        else { st.ph='reset'; st.t=0; st.rx=st.px; st.ry=st.py; st.bounced=0; }
+      }
+    }
+    else { // reset: spring the node back to the loaded start (ease-out-back settle) => seamless loop
+      st.t+=dt/0.7; var e=eob(Math.min(st.t,1));
+      var sx=bx+La*Math.cos(0.5), sy=by-La*Math.sin(0.5);
+      st.px=lerp(st.rx,sx,e); st.py=lerp(st.ry,sy,e);
+      st.armA=lerp(st.armA,0.5,Math.min(1,3*dt));
+      if(st.t>=1){st.ph='load';st.t=0;}
+    }
+    var tipx=bx+La*Math.cos(st.armA), tipy=by-La*Math.sin(st.armA);
+    var g=P({tilt:tl});
+    var flying=(st.ph==='fly'||st.ph==='reset');
+    g[3].x=flying?st.px:tipx; g[3].y=flying?st.py:tipy; g[3].blue=0;
+    return g;
+  }});
+
+// Yo-yo: the node drops out along its line and rolls back, twice, with a spin at the bottom.
+add({id:'yoyo',axis:'Loops',name:'Yo-yo',prop:'travel + spin · twice',
+  desc:'The node drops out along its line and rolls back, twice, with a spin at the bottom.',
+  dur:2000,phases:[['throw',1000],['throw',1000]],
+  ch:function(t){var lo=(t%1000)/1000;var out=Math.pow(Math.sin(Math.PI*lo),1.4);
+    return {travel:0.8*out, spin:0.18*Math.sin(Math.PI*lo)};}});
+
+/* ---- Rhythm (leaning into the name) ---- */
+add({id:'metronome',axis:'Rhythm',name:'Metronome',prop:'spin · node follow-through bounce',
+  desc:'The body ticks side to side; the green node lags behind the swing and bounces out at each reversal, like weight on the end of the arm.',
+  dur:1600,phases:[['tick',800],['tock',800]],
+  ch:function(t){var ph=TAU*(t/1600);
+    return {spin:0.32*Math.sin(ph),
+            orbit:0.30*Math.sin(ph-0.5),                       // node trails the body (follow-through)
+            travel:0.18*Math.pow(Math.abs(Math.sin(ph)),2)};}}); // flung outward at each reversal = bounce
+
+add({id:'toss',axis:'Rhythm',name:'Toss',prop:'parabolic · detached · seamless',accentSolo:true,
+  desc:'The node is tossed between the two arms on a high arc — L to R and back to L each loop, detaching cleanly and landing exactly where it started. The sending arm throws through, the catching arm gives.',
+  dur:1800,phases:[['toss',900],['toss back',900]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var d=params.size, T=1800, u=(t%T)/T;                       // 0..1 over the whole loop
+    var leg=u<0.5?0:1, lp=(u%0.5)/0.5, e=eio(lp);              // leg 0: L->R, leg 1: R->L (returns to L => seamless)
+    var L=f[1], R=f[2], from=leg===0?L:R, to=leg===0?R:L;
+    var arc=1.45*d;                                            // taller arc => more distance + clear detach
+    var gx=lerp(from.x,to.x,e), gy=lerp(from.y,to.y,e)-4*arc*lp*(1-lp);
+    var sx=to.x-from.x, sy=to.y-from.y, sl=Math.hypot(sx,sy)||1;
+    from.x+=sx/sl*0.10*d*(1-lp); from.y+=sy/sl*0.10*d*(1-lp);  // sender throws through
+    to.x-=sx/sl*0.09*d*lp;       to.y-=sy/sl*0.09*d*lp;        // receiver gives on the catch
+    f[3].x=gx; f[3].y=gy; f[3].blue=0;
+    return f;
+  }});
+
+add({id:'syncope',axis:'Rhythm',name:'Syncope',prop:'spread on beat, pulse off it',
+  desc:'The body keeps the beat and the node answers between the beats. The accent you notice is the one that is not on the count.',
+  dur:1600,phases:[['1',400],['&',400],['2',400],['&',400]],
+  ch:function(t){
+    var beat=(t%800<400)?1:0;                    // body pulses on beat
+    var offp=(t%800>=400)?Math.sin(Math.PI*seg(t%800,400,800)):0;  // node off-beat
+    return {scaleAll:0.05*eio(beat?seg(t%800,0,400):1-seg(t%800,400,800)), travel:-0.22*offp};
+  }});
+
+/* removed: Phase (per comment — remove) */
+
+add({id:'phase-fluid',axis:'Rhythm',name:'Phase · fluid',prop:'orbit : spin = 4 : 3 · fluid body',
+  desc:'The same 4:3 polyrhythm, but the cluster flexes and breathes as it turns instead of rotating as a rigid chain.',
+  dur:4800,phases:[['cycle',4800]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){var c=env.clock;
+    var g2=P({orbit:4*TAU*(t/4800), spin:3*TAU*(t/4800)});
+    for(var i=0;i<3;i++){var w=0.12*Math.sin(c*2.2 - i*1.6);        // per-lobe radial breathing, phase-lagged
+      g2[i].x=CX+(g2[i].x-CX)*(1+w); g2[i].y=CY+(g2[i].y-CY)*(1+w);
+      g2[i].r*=1+0.07*Math.sin(c*3.0 - i*2.0);
+    }
+    return g2;
+  }});
+
+/* ---- Moods (affective, pure node-timing; distinct from Postures) ---- */
+/* removed: Eager (per comment) */
+
+/* removed: Hesitant (per comment) */
+
+/* removed: Confident (per comment) */
+
+add({id:'delighted',axis:'Moods',name:'Delighted',prop:'gravity bounce + spin · flourish',
+  desc:'The node drops onto the cluster and bounces under real gravity, each bounce smaller, then spins off in a flourish. Two bounces reads as pleased.',
+  dur:2600,phases:[['drop',500],['bounce',400],['bounce',400],['flourish',600],['rest',700]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var st=env.st,dt=env.dt,d=params.size,a=accAng0,base=accHyp*d*params.spread;
+    if(!st.i){st.i=1;st.ph='drop';st.h=1.6;st.v=0;st.n=0;st.th=0;st.rt=0;}
+    if(st.ph==='drop'||st.ph==='bounce'){
+      st.v += 13*dt; st.h -= st.v*dt;                   // stronger gravity => snappier drop, more dynamic speed
+      if(st.h<=0){ st.h=0; if(Math.abs(st.v)>0.4 && st.n<2){ st.v=-st.v*0.62; st.n++; st.ph='bounce'; } else { st.v=0; st.ph='flourish'; st.th=0; } }
+    } else if(st.ph==='flourish'){ st.th += dt*9; if(st.th>=TAU){st.ph='rest';st.rt=0;} }  // quicker spin-off
+    else { st.rt+=dt; if(st.rt>=0.55){st.ph='drop';st.h=1.6;st.v=0;st.n=0;} }
+    var ang=a+(st.ph==='flourish'?st.th:0), dist=base + st.h*d;
+    f[3].x=CX+Math.cos(ang)*dist; f[3].y=CY+Math.sin(ang)*dist;
+    f[3].blue=params.colourfuse?clamp((0.4-st.h)*1.2,0,1):0;
+    return f;
+  }});
+
+/* ---- Physics (real integrators ported from the original Skedulo gallery) ---- */
+/* removed: Double pendulum (per comment — remove) */
+
+/* removed: Collide, Spinning top (per comments) */
+
+/* removed: Whip (per comment — remove) */
+
+add({id:'chase',axis:'Physics',name:'Chase',prop:'cyclic pursuit · four balls',
+  desc:'Each ball chases the next one round the ring. They wheel and spiral, forever almost catching up.',
+  dur:4000,phases:[['chase',4000]],
+  ch:function(t){return {};},
+  custom:function(f,t,env){
+    var st=env.st,dt=env.dt,d=params.size;
+    if(!st.i){st.i=1;st.p=[];for(var q=0;q<4;q++){var a=q*(TAU/4);st.p.push({x:CX+Math.cos(a)*1.4*d,y:CY+Math.sin(a)*1.4*d,vx:0,vy:0});}}
+    var steps=Math.max(1,Math.ceil(dt/0.008)),h=dt/steps;
+    for(var s=0;s<steps;s++){
+      for(var q=0;q<4;q++){var A=st.p[q],B=st.p[(q+1)%4];
+        var dx=B.x-A.x,dy=B.y-A.y,dd=Math.hypot(dx,dy)||1;
+        A.vx+=(dx/dd)*7.0*d*h; A.vy+=(dy/dd)*7.0*d*h;                     // chase the next ball
+        var rx=A.x-CX,ry=A.y-CY,rr=Math.hypot(rx,ry)||1;
+        A.vx+=(1.35*d-rr)*(rx/rr)*6*h; A.vy+=(1.35*d-rr)*(ry/rr)*6*h;    // ring spring => wheels, never collapses
+        A.vx*=(1-2.2*h); A.vy*=(1-2.2*h);
+      }
+      for(var q=0;q<4;q++){st.p[q].x+=st.p[q].vx*h; st.p[q].y+=st.p[q].vy*h;}
+    }
+    for(var q=0;q<4;q++){f[q].x=st.p[q].x;f[q].y=st.p[q].y;f[q].r=d/2*0.82;f[q].blue=0;}
+    return f;
+  }});
+
+/* ============================ RENDER ============================ */
+var rt=[], GOOSEQ=0;
+function makeStage(container, m){
+  var NS='http://www.w3.org/2000/svg';
+  // each tile gets its own goo filter so tension/reach can be tuned per card
+  var fid='goo'+(GOOSEQ++), defs=document.getElementById('gdefs');
+  var filt=document.createElementNS(NS,'filter');
+  filt.setAttribute('id',fid); filt.setAttribute('x','-60%'); filt.setAttribute('y','-60%');
+  filt.setAttribute('width','220%'); filt.setAttribute('height','220%'); filt.setAttribute('color-interpolation-filters','sRGB');
+  var blur=document.createElementNS(NS,'feGaussianBlur'); blur.setAttribute('in','SourceGraphic'); blur.setAttribute('stdDeviation','22'); blur.setAttribute('result','b');
+  var mat=document.createElementNS(NS,'feColorMatrix'); mat.setAttribute('in','b'); mat.setAttribute('mode','matrix');
+  mat.setAttribute('values','1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8');
+  filt.appendChild(blur); filt.appendChild(mat); defs.appendChild(filt);
+  var svg=document.createElementNS(NS,'svg'); svg.setAttribute('viewBox','0 0 1000 1000'); svg.setAttribute('class','stagesvg');
+  var g=document.createElementNS(NS,'g'); g.setAttribute('filter','url(#'+fid+')');
+  var circles=[];
+  for(var i=0;i<3;i++){var c=document.createElementNS(NS,'circle');g.appendChild(c);circles.push(c);}
+  var acc=document.createElementNS(NS,'circle');
+  // accentSolo: the accent renders as a crisp circle OUTSIDE the goo group, so it can never bridge (pure pulse).
+  if(m.accentSolo){ svg.appendChild(g); svg.appendChild(acc); } else { g.appendChild(acc); svg.appendChild(g); }
+  circles.push(acc);
+  container.appendChild(svg);
+  return {g:g,circles:circles,fid:fid,blur:blur,mat:mat};
+}
+function makeStrip(container,m){
+  var strip=document.createElement('div'); strip.className='strip';
+  var segs=[];
+  m.phases.forEach(function(ph){
+    var s=document.createElement('div'); s.className='seg'; s.style.flexBasis=(ph[1]/m.dur*100)+'%';
+    var lab=document.createElement('span'); lab.className='sl'; lab.textContent=ph[0]+' '+ph[1];
+    s.appendChild(lab); strip.appendChild(s); segs.push(s);
+  });
+  var head=document.createElement('div'); head.className='head'; strip.appendChild(head);
+  container.appendChild(strip);
+  return {strip:strip,segs:segs,head:head};
+}
+var AXES=[
+  {key:'Canonical',n:'01',title:'Canonical',sub:'Straight from the Delivery 02 spec. Four product states and two logomark loops, exact timings and easings. Re-expressed on the grammar.'},
+  {key:'Postures',n:'02',title:'Postures',sub:'The cluster itself deforms — splay opens the V, tilt lets one arm reach, spread tucks, spin turns the body — then resolves. Body gestures, not node gestures.'},
+  {key:'Loops',n:'03',title:'Loops & variations',sub:'Node mechanics. The baton pass (absorb, turn, a new lobe emerges) and containment (a full orbit that stays inside the resting footprint).'},
+  {key:'Rhythm',n:'04',title:'Rhythm',sub:'Leaning into the name. Structure in time: the beat, swing, the off-beat, and a 4:3 polyrhythm.'},
+  {key:'Moods',n:'05',title:'Moods',sub:'How it feels about the work. Pure timing on the travelling node, kept distinct from the body postures above.'},
+  {key:'Physics',n:'06',title:'Physics',sub:'Real integrators ported from the original Skedulo motion gallery — gravity, elastic collisions, momentum, and chaos, running on the same four forms.'},
+  {key:'Complete',n:'07',title:'Complete · concepts',sub:'Three candidate finales for the Complete state — celebratory, precise dances from above that resolve into the logo. Pick one to promote into the sequence.'}
+];
+function build(){
+  var host=document.getElementById('sections'); var nav=document.getElementById('nav'); var num=0;
+  AXES.forEach(function(ax){
+    var a=document.createElement('a'); a.href='#sec-'+ax.key; a.textContent=ax.n+' · '+ax.title; nav.appendChild(a);
+    var head=document.createElement('div'); head.className='sechead'; head.id='sec-'+ax.key;
+    var list=M.filter(function(m){return m.axis===ax.key;});
+    head.innerHTML='<span class="n">'+ax.n+'</span><h2>'+ax.title+'</h2><span class="count">'+list.length+'</span>';
+    host.appendChild(head);
+    var sub=document.createElement('p'); sub.className='secsub'; sub.textContent=ax.sub; host.appendChild(sub);
+    var grid=document.createElement('div'); grid.className='grid'; host.appendChild(grid);
+    list.forEach(function(m){
+      num++; var mn=('0'+num).slice(-2);
+      var tile=document.createElement('div'); tile.className='tile';
+      var stage=document.createElement('div'); stage.className='stage'; tile.appendChild(stage);
+      var cap=document.createElement('div'); cap.className='cap';
+      cap.innerHTML='<div class="nm"><h3>'+m.name+'</h3><span class="num">'+mn+'</span></div>';
+      var sh=makeStage(stage,m);
+      var st=makeStrip(cap,m);
+      var prop=document.createElement('div'); prop.className='prop'; prop.textContent=m.prop; cap.appendChild(prop);
+      var desc=document.createElement('div'); desc.className='desc'; desc.textContent=m.desc; cap.appendChild(desc);
+      var rec={m:m,g:sh.g,circles:sh.circles,fid:sh.fid,blur:sh.blur,mat:sh.mat,segs:st.segs,head:st.head,
+               ps:{},p:JSON.parse(JSON.stringify(DEFAULTS)),clock:0,inputs:{},spans:{}};
+      buildCardControls(cap,rec);
+      tile.appendChild(cap); grid.appendChild(tile);
+      updateGooFor(rec);
+      rt.push(rec);
+    });
+  });
+}
+
+function paint(r,forms){
+  var mc=markCols(params), cluster=mc.cluster;
+  r.g.setAttribute('filter',(params.necks&&!params.lowpower)?('url(#'+r.fid+')'):'none');
+  for(var i=0;i<4;i++){
+    var f=forms[i],c=r.circles[i];
+    c.setAttribute('cx',f.x.toFixed(2)); c.setAttribute('cy',f.y.toFixed(2)); c.setAttribute('r',Math.max(0.1,f.r).toFixed(2));
+    c.setAttribute('fill', f.col?f.col:(i<3?cluster:(mc.duotone?mix(BRAND.green,cluster,f.blue||0):cluster)));
+  }
+}
+function updateStrip(r,t){
+  var dur=r.m.dur, acc=0, active=-1;
+  for(var i=0;i<r.m.phases.length;i++){var w=r.m.phases[i][1];if(t>=acc&&t<acc+w){active=i;}acc+=w;}
+  for(var j=0;j<r.segs.length;j++){var on=j===active;if(r.segs[j]._on!==on){r.segs[j].classList.toggle('on',on);r.segs[j]._on=on;}}
+  r.head.style.left=(t/dur*100)+'%';
+}
+
+function updateGooFor(r){
+  // per-card goo: tighter blur + steeper alpha ramp => forms snap to clean circles on separation,
+  // necks only when genuinely close ("clean snap"). Colour still blends across a true contact.
+  var p=r.p;
+  r.blur.setAttribute('stdDeviation',((p.size/150)*17*p.reach).toFixed(2));
+  var A=clamp(lerp(19,32,p.tension-0.5),12,36);
+  r.mat.setAttribute('values','1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 '+A.toFixed(1)+' '+(-(A*0.46)).toFixed(1));
+}
+
+var last=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  var rms=now-last;last=now; if(rms>100)rms=16;
+  var gv=document.getElementById('galleryView'); if(gv && gv.hidden) return;   // don't animate the hidden catalog
+  for(var i=0;i<rt.length;i++){
+    var r=rt[i], m=r.m;
+    params=r.p;                         // swap in THIS card's own settings for P()/envelope()/paint()
+    var sp=r.p.speed, sdt=(rms/1000)*sp;
+    r.clock+=rms*sp;                    // per-card clock => per-card speed
+    var t=r.clock%m.dur;
+    var forms=P(m.ch(t));
+    if(m.custom) forms=m.custom(forms,t,{dt:sdt, st:r.ps, clock:r.clock/1000});
+    envelope(forms,r.clock);
+    paint(r,forms); updateStrip(r,t);
+  }
+}
+
+/* ============================ CONTROLS ============================ */
+var SLIDERS=[
+  {k:'speed',name:'Speed',min:0.2,max:2,step:0.05},
+  {k:'spread',name:'Spread',min:0.6,max:1.5,step:0.02},
+  {k:'reach',name:'Reach',min:0.6,max:1.6,step:0.02},
+  {k:'tension',name:'Surface tension',min:0.5,max:1.5,step:0.02},
+  {k:'size',name:'Size',min:110,max:190,step:2}
+];
+var TOGGLES=[{k:'necks',name:'Necks'},{k:'colourfuse',name:'Colour-fuse'},{k:'breathe',name:'Breathe'},{k:'tremble',name:'Tremble'}];
+var MODES=[{k:'lowpower',name:'Low-power',alt:true}];
+// Colour picker: 5 hue swatches + a Two-tone/Mono toggle, shared across all boards.
+// applyHue(k) and applyDuo(duotone) write into whatever params the board uses.
+function buildColourPicker(hostId, applyHue, applyDuo, initHue, initDuo){
+  var host=document.getElementById(hostId); if(!host) return; host.innerHTML='';
+  var sw=document.createElement('div'); sw.className='swpick';
+  HUES.forEach(function(h){
+    var b=document.createElement('button'); b.className='sw'+(h.k===initHue?' on':'');
+    b.style.background=HUE[h.k]; b.title=h.name+' · '+h.note; b.setAttribute('data-hue',h.k);
+    b.onclick=function(){ sw.querySelectorAll('.sw').forEach(function(x){x.classList.remove('on');}); b.classList.add('on'); applyHue(h.k); };
+    sw.appendChild(b);
+  });
+  host.appendChild(sw);
+  var mb=document.createElement('button'); mb.className='chip alt tchip'; mb.textContent='Two-tone';
+  mb.title='Add the green accent node (brand two-tone). Off = monochrome, one colour.';
+  mb.setAttribute('aria-pressed', initDuo?'true':'false');
+  mb.onclick=function(){ var duo=(mb.getAttribute('aria-pressed')!=='true'); mb.setAttribute('aria-pressed',duo?'true':'false'); applyDuo(duo); };
+  host.appendChild(mb);
+}
+// Background picker: swatches that set the shared stage background (--stagebg) for every board.
+function buildBgPicker(hostId, init){
+  var host=document.getElementById(hostId); if(!host) return; host.innerHTML=''; host.className='toggles bgpick';
+  var sw=document.createElement('div'); sw.className='swpick';
+  BGS.forEach(function(g){
+    var b=document.createElement('button'); b.className='sw bgsw'+(g.k===init?' on':'');
+    b.style.background=g.col; b.title='Background · '+g.name; b.setAttribute('data-bg',g.k);
+    b.onclick=function(){ document.querySelectorAll('.bgpick .sw').forEach(function(x){x.classList.remove('on');});
+      document.querySelectorAll('.bgpick .sw[data-bg="'+g.k+'"]').forEach(function(x){x.classList.add('on');}); applyStageBg(g.col); };
+    sw.appendChild(b);
+  });
+  host.appendChild(sw);
+}
+function fmt(k,v){return k==='size'?Math.round(v):(+v).toFixed(2);}
+// per-card sliders: each writes into that card's own params (rec.p)
+function buildCardControls(cap,rec){
+  var wrap=document.createElement('div'); wrap.className='tsliders';
+  SLIDERS.forEach(function(cfg){
+    var d=document.createElement('div'); d.className='tctl';
+    var lab=document.createElement('label'); lab.innerHTML=cfg.name+' <span>'+fmt(cfg.k,rec.p[cfg.k])+'</span>';
+    var span=lab.querySelector('span');
+    var inp=document.createElement('input'); inp.type='range'; inp.min=cfg.min; inp.max=cfg.max; inp.step=cfg.step; inp.value=rec.p[cfg.k];
+    inp.oninput=function(){rec.p[cfg.k]=parseFloat(this.value); span.textContent=fmt(cfg.k,rec.p[cfg.k]); updateGooFor(rec);};
+    d.appendChild(lab); d.appendChild(inp); wrap.appendChild(d);
+    rec.inputs[cfg.k]=inp; rec.spans[cfg.k]=span;
+  });
+  cap.appendChild(wrap);
+}
+// global toggles/modes/reset: applied to EVERY card's params
+function buildControls(){
+  var tg=document.getElementById('toggles');
+  TOGGLES.forEach(function(cfg){
+    var b=document.createElement('button');b.className='chip';b.textContent=cfg.name;b.setAttribute('aria-pressed',DEFAULTS[cfg.k]?'true':'false');
+    b.onclick=function(){var v=(b.getAttribute('aria-pressed')!=='true');b.setAttribute('aria-pressed',v?'true':'false');
+      rt.forEach(function(r){r.p[cfg.k]=v; updateGooFor(r);});};tg.appendChild(b);
+  });
+  var md=document.getElementById('modes');
+  MODES.forEach(function(cfg){
+    var b=document.createElement('button');b.className='chip alt';b.textContent=cfg.name;b.setAttribute('aria-pressed',DEFAULTS[cfg.k]?'true':'false');
+    b.onclick=function(){var v=(b.getAttribute('aria-pressed')!=='true');b.setAttribute('aria-pressed',v?'true':'false');
+      rt.forEach(function(r){r.p[cfg.k]=v; updateGooFor(r);});};md.appendChild(b);
+  });
+  buildColourPicker('galleryCols',
+    function(h){ rt.forEach(function(r){r.p.hue=h;}); },
+    function(duo){ rt.forEach(function(r){r.p.duotone=duo;}); },
+    DEFAULTS.hue, DEFAULTS.duotone);
+  buildBgPicker('galleryBg','white');
+  document.getElementById('reset').onclick=function(){
+    rt.forEach(function(r){
+      r.p=JSON.parse(JSON.stringify(DEFAULTS));
+      SLIDERS.forEach(function(cfg){ if(r.inputs[cfg.k]){r.inputs[cfg.k].value=r.p[cfg.k]; r.spans[cfg.k].textContent=fmt(cfg.k,r.p[cfg.k]);} });
+      updateGooFor(r);
+    });
+    document.querySelectorAll('#toggles .chip').forEach(function(ch,idx){ch.setAttribute('aria-pressed',DEFAULTS[TOGGLES[idx].k]?'true':'false');});
+    document.querySelectorAll('#modes .chip').forEach(function(ch,idx){ch.setAttribute('aria-pressed',DEFAULTS[MODES[idx].k]?'true':'false');});
+    buildColourPicker('galleryCols',
+      function(h){ rt.forEach(function(r){r.p.hue=h;}); },
+      function(duo){ rt.forEach(function(r){r.p.duotone=duo;}); },
+      DEFAULTS.hue, DEFAULTS.duotone);
+    applyStageBg('#FFFFFF'); buildBgPicker('galleryBg','white');
+  };
+}
+
+/* ============================ AGENT-STATE LOADER ============================
+   REST (restPose) is the shared switchpoint. On an event: freeze the current pose,
+   carry its momentum, and glide to REST over T_RESOLVE (fluid, no reversal), then enter
+   the next state's loop starting at REST. Thinking is folded into WORKING. */
+var LPARAMS=JSON.parse(JSON.stringify(DEFAULTS));      // loader's own params, isolated from the gallery
+var LVB='220 220 560 560';                             // tight artboard around the widest excursion
+
+var LST={
+  IDLE:{label:'IDLE', dur:3000, loop:true,
+    // gentle breathe; node still; zero velocity at the seam (1-cos)
+    ch:function(t){var u=t/3000; return {scaleAll:0.06*0.5*(1-Math.cos(TAU*u))};}},
+  WORKING:{label:'WORKING', dur:2000, loop:true,
+    // whole mark turns (rigid spin) with a neck throb — the "engine running" state (also covers thinking)
+    ch:function(t){var u=t/2000; return {spin:TAU*u, orbit:TAU*u, spread:1+0.05*0.5*(1-Math.cos(2*TAU*u))};}},
+  DONE:{label:'DONE', dur:1200, loop:false, next:'agent.idle',
+    ch:function(t){return {};},
+    custom:function(f,t){
+      var u=t/1200, tr;
+      if(u<0.18) tr=0.18*eo(u/0.18);                              // anticipation pull-back
+      else { var p=(u-0.18)/0.82; tr=lerp(0.18,-0.66,eob(p)); }   // plunge in + spring overshoot => fuse
+      var pop=0.12*Math.max(0,Math.sin(PI*clamp((u-0.30)/0.55,0,1))); // happy pulse as it lands
+      return P({travel:tr, fill:clamp(-tr/0.66,0,1), scaleAll:pop});
+    }}
+};
+var EVMAP={'agent.idle':'IDLE','agent.thinking':'WORKING','tool.start':'WORKING','tool.end':'WORKING','agent.complete':'DONE'};
+var T_RESOLVE=180;
+
+function loaderPose(state,t){var s=LST[state]; var base=P(s.ch?s.ch(t):{}); return s.custom?s.custom(base,t):base;}
+function cloneForms(a){return a.map(function(o){return {x:o.x,y:o.y,r:o.r,blue:o.blue||0,col:null};});}
+function hermiteForms(from,vel,rest,T,s){                          // cubic Hermite: carries start velocity, lands at rest with zero velocity
+  var h00=2*s*s*s-3*s*s+1,h10=s*s*s-2*s*s+s,h01=-2*s*s*s+3*s*s;
+  return from.map(function(f0,i){var v=(vel&&vel[i])||{x:0,y:0,r:0},p1=rest[i];
+    return {x:h00*f0.x+h10*T*v.x+h01*p1.x, y:h00*f0.y+h10*T*v.y+h01*p1.y, r:h00*f0.r+h10*T*v.r+h01*p1.r,
+            blue:lerp(f0.blue||0,0,eio(s)), col:null};});
+}
+
+var L={state:'IDLE',mode:'loop',clock:0,res:null,cur:null,prev:null,vel:null,px:48};
+function setStatus(){var st=document.getElementById('stState'),ph=document.getElementById('stPhase');
+  if(!st)return; st.textContent=(L.mode==='resolve')?('→ '+L.res.next):L.state; ph.textContent=L.mode;}
+function fireLoaderEvent(ev){var target=EVMAP[ev]; if(!target)return;
+  var from=L.cur?cloneForms(L.cur):restPose();
+  L.res={t:0,from:from,vel:L.vel,next:target}; L.mode='resolve'; setStatus();}
+function loaderReset(){if(scriptTimer){clearTimeout(scriptTimer);scriptTimer=null;} L.mode='loop';L.state='IDLE';L.clock=0;L.res=null;L.prev=null;L.vel=null;setStatus();}
+
+var SCRIPT=['agent.thinking','tool.start','tool.end','agent.complete'], scriptTimer=null;   // idle -> working... -> complete -> (auto) idle
+function runScript(){loaderReset(); var i=0, gaps=[700,1500,1500,900];
+  function step(){ if(i>=SCRIPT.length)return; fireLoaderEvent(SCRIPT[i]); var g=gaps[i]||1200; i++; scriptTimer=setTimeout(step,g);} scriptTimer=setTimeout(step,700);}
+
+function buildLoaderStage(px){
+  var NS='http://www.w3.org/2000/svg', fid='lgoo_'+Math.random().toString(36).slice(2,7), defs=document.getElementById('gdefs');
+  var filt=document.createElementNS(NS,'filter');filt.setAttribute('id',fid);filt.setAttribute('x','-60%');filt.setAttribute('y','-60%');filt.setAttribute('width','220%');filt.setAttribute('height','220%');filt.setAttribute('color-interpolation-filters','sRGB');
+  var blur=document.createElementNS(NS,'feGaussianBlur');blur.setAttribute('in','SourceGraphic');blur.setAttribute('stdDeviation','22');blur.setAttribute('result','b');
+  var mat=document.createElementNS(NS,'feColorMatrix');mat.setAttribute('in','b');mat.setAttribute('mode','matrix');mat.setAttribute('values','1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8');
+  filt.appendChild(blur);filt.appendChild(mat);defs.appendChild(filt);
+  var pxE=(px%2)?px+1:px;                                          // even pixel dims
+  var svg=document.createElementNS(NS,'svg');svg.setAttribute('viewBox',LVB);svg.setAttribute('width',pxE);svg.setAttribute('height',pxE);
+  var g=document.createElementNS(NS,'g');g.setAttribute('filter','url(#'+fid+')');
+  var circles=[];for(var i=0;i<4;i++){var c=document.createElementNS(NS,'circle');g.appendChild(c);circles.push(c);}
+  svg.appendChild(g);
+  return {svg:svg,g:g,circles:circles,blur:blur,mat:mat,fid:fid,px:pxE};
+}
+// Per-action node solo: move the accent circle OUT of the goo group (renders on top, crisp) so it can't
+// form a thin metaball tether to the cluster; move it back in otherwise. No-ops when already correct.
+function setStageSolo(stage,solo){ if(!stage) return; var c=stage.circles[3];
+  if(solo){ if(c.parentNode!==stage.svg) stage.svg.appendChild(c); }
+  else { if(c.parentNode!==stage.g) stage.g.appendChild(c); } }
+// Per-action goo tuning: some motions want the tighter "clean snap" goo (fatter necks when close, no thin
+// threads when apart) that the gallery cards use, rather than the looser default. blur + alpha-ramp pair.
+function setStageGoo(stage,blur,A){ if(!stage) return;
+  stage.blur.setAttribute('stdDeviation',blur.toFixed(1));
+  stage.mat.setAttribute('values','1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 '+A.toFixed(1)+' '+(-(A*0.46)).toFixed(1)); }
+function paintLoader(stage,forms,fallback){
+  var noGoo = fallback || !params.necks || params.lowpower;                   // 16px / necks-off / low-power => no goo
+  stage.g.setAttribute('filter', noGoo?'none':('url(#'+stage.fid+')'));
+  var mc=markCols(params), cluster=mc.cluster;
+  for(var i=0;i<4;i++){var f=forms[i],c=stage.circles[i];
+    c.setAttribute('cx',f.x.toFixed(1));c.setAttribute('cy',f.y.toFixed(1));c.setAttribute('r',Math.max(0.1,f.r).toFixed(1));
+    var col=f.col?f.col:((i<3)?cluster:(mc.duotone?(fallback?BRAND.green:mix(BRAND.green,cluster,f.blue||0)):cluster));
+    c.setAttribute('fill',col);}
+}
+// apply breathe/tremble to a copy for painting only (keeps colour; leaves motion state untouched)
+function envCopy(forms,C){
+  if(!params.breathe && !params.tremble) return forms;
+  var g=forms.map(function(f){return {x:f.x,y:f.y,r:f.r,blue:f.blue,col:f.col};});
+  envelope(g,C); return g;
+}
+var lstageZoom=null, lstageActual=null;
+function rebuildActual(){var w=document.getElementById('loaderActualWrap'); w.innerHTML=''; lstageActual=buildLoaderStage(L.px); w.appendChild(lstageActual.svg); document.getElementById('pxlabel').textContent=lstageActual.px;}
+
+var lLast=performance.now();
+function loaderFrame(now){
+  requestAnimationFrame(loaderFrame);
+  if(document.getElementById('loaderView').hidden) return;         // don't run the loader when its tab is hidden
+  var dt=now-lLast; if(dt<1000/30) return; lLast=now;              // 30fps cap
+  var step=dt>100?33:dt;
+  params=LPARAMS;                                                  // isolate loader geometry from gallery params
+  var forms;
+  if(L.mode==='resolve'){
+    L.res.t+=step; var s=clamp(L.res.t/T_RESOLVE,0,1);
+    forms=hermiteForms(L.res.from,L.res.vel,restPose(),T_RESOLVE,s);
+    if(s>=1){L.mode='loop';L.state=L.res.next;L.clock=0;L.res=null;L.prev=null;L.vel=null;forms=loaderPose(L.state,0);setStatus();}
+  } else {
+    L.clock+=step; var spec=LST[L.state], t=spec.loop?(L.clock%spec.dur):Math.min(L.clock,spec.dur);
+    forms=loaderPose(L.state,t);
+    if(!spec.loop && L.clock>=spec.dur){ fireLoaderEvent(spec.next); }   // DONE auto-returns to idle
+  }
+  if(L.prev){ L.vel=forms.map(function(f,i){return {x:(f.x-L.prev[i].x)/step,y:(f.y-L.prev[i].y)/step,r:(f.r-L.prev[i].r)/step};}); }
+  L.cur=forms; L.prev=cloneForms(forms);
+  var pf=envCopy(forms, now);
+  paintLoader(lstageZoom,pf,false);
+  paintLoader(lstageActual,pf,lstageActual.px<=16);
+}
+
+/* ---- self-check report ---- */
+function loaderSelfCheck(){
+  params=LPARAMS; var rest=restPose();
+  function dist(a,b){var m=0;for(var i=0;i<4;i++){m=Math.max(m,Math.hypot(a[i].x-b[i].x,a[i].y-b[i].y),Math.abs(a[i].r-b[i].r));}return m;}
+  function vel(a,b,dt){return a.map(function(p,i){return {x:(b[i].x-p.x)/dt,y:(b[i].y-p.y)/dt,r:(b[i].r-p.r)/dt};});}
+  function vmag(v){var m=0;for(var i=0;i<v.length;i++)m=Math.max(m,Math.hypot(v[i].x,v[i].y));return m;}
+  function vdiff(a,b){var m=0;for(var i=0;i<a.length;i++)m=Math.max(m,Math.hypot(a[i].x-b[i].x,a[i].y-b[i].y));return m;}
+  var out=[];
+  ['IDLE','WORKING','DONE'].forEach(function(k){
+    var s=LST[k], L2=[k+':'];
+    if(s.loop){
+      L2.push('  frame0==frameN: '+((dist(loaderPose(k,0),loaderPose(k,s.dur))<0.6)?'OK':'OFF'));
+      var vB=vel(loaderPose(k,s.dur-1),loaderPose(k,s.dur),1), vA=vel(loaderPose(k,0),loaderPose(k,1),1);
+      L2.push('  loop C1 seam: '+((vdiff(vB,vA)<0.8)?'OK':'kink '+vdiff(vB,vA).toFixed(2)));
+    } else { L2.push('  one-shot; auto-fires '+s.next+' at end'); }
+    var mid=loaderPose(k,(s.dur||1000)*0.37), midp=loaderPose(k,(s.dur||1000)*0.37-1), v=vel(midp,mid,1);
+    var end=hermiteForms(mid,v,rest,T_RESOLVE,1), endp=hermiteForms(mid,v,rest,T_RESOLVE,1-0.002);
+    var ev=vel(endp,end,0.002*T_RESOLVE);
+    L2.push('  resolve→REST: '+((dist(end,rest)<0.6)?'lands OK':'off '+dist(end,rest).toFixed(1))+', end vel '+((vmag(ev)<0.05)?'~0 OK':vmag(ev).toFixed(3)));
+    out.push(L2.join('\n'));
+  });
+  // silhouette distinctness @24px: node excursion + spin range per state
+  function feat(k){var s=LST[k],rp=restPose(),nodeMax=0,angMax=0,N=40;
+    for(var j=0;j<=N;j++){var f=loaderPose(k,(s.dur||1200)*j/N);
+      nodeMax=Math.max(nodeMax,Math.hypot(f[3].x-rp[3].x,f[3].y-rp[3].y));
+      var ang=Math.atan2(f[0].y-500,f[0].x-500)-Math.atan2(rp[0].y-500,rp[0].x-500);
+      while(ang>PI)ang-=TAU; while(ang<-PI)ang+=TAU; angMax=Math.max(angMax,Math.abs(ang));}
+    return {n:Math.round(nodeMax),s:Math.round(angMax*57)};}
+  var fi=feat('IDLE'),fw=feat('WORKING'),fd=feat('DONE');
+  var distinct=(fi.n<20&&fi.s<20)&&(fw.s>90)&&(fd.n>80);
+  out.push('silhouette @24px (still / spin / one-shot):\n  IDLE node±'+fi.n+' spin'+fi.s+'°   WORKING node±'+fw.n+' spin'+fw.s+'°   DONE node±'+fd.n+' spin'+fd.s+'°\n  distinct: '+(distinct?'OK':'REVIEW'));
+  var el=document.getElementById('report'); if(el) el.textContent=out.join('\n\n');
+}
+
+/* ---- wiring ---- */
+// State loader tab removed. This just wires the view switch (Sequence / Gallery).
+function initLoader(){
+  document.querySelectorAll('.viewswitch [data-view]').forEach(function(b){b.onclick=function(){var v=b.getAttribute('data-view');
+    document.querySelectorAll('.viewswitch .vbtn').forEach(function(x){x.classList.remove('on');}); b.classList.add('on');
+    var sv=document.getElementById('seqView'); if(sv) sv.hidden=(v!=='sequence');
+    var gv=document.getElementById('galleryView'); if(gv) gv.hidden=(v!=='gallery');};});
+}
+
+/* ============================ SEQUENCE SHOWCASE ============================
+   Plays selected catalog motions in order; between each it carries momentum and glides
+   to REST (the universal resolve), so every step links through the rested Tempo mark. */
+// Each segment: intro (ease REST -> motion) + play (the motion) + tail (ease motion -> REST).
+// Both ends land on REST at zero velocity, so every step links through the identical rest pose.
+// Agent-state sequence (dev-team directive). Each action maps to a real application state.
+// intro/tail = 0 for motions that already begin and end on the logo (reveal self-forms/settles; torn
+// and hierarchy start and end at rest). cradle and chain need a bloom in and a settle out.
+var SEQ=[
+  {id:'reveal',    intro:0,   play:2800, tail:0,   state:'Reveal',    app:'First paint · logo forms'},
+  {id:'cradle',    intro:950,  play:3600, tail:800, state:'Thinking',  app:'Reading input · planning'},
+  {id:'chain',     intro:500, play:4200, tail:700, state:'Tool use',  app:'Running tools · active'},
+  {id:'waitswap',  intro:0,   play:3000, tail:0,   state:'Waiting',   app:'Awaiting a stakeholder'},
+  {id:'complete-victory', intro:0, play:2800, tail:0, state:'Complete',  app:'Step / session done'}
+];
+function Mby(id){for(var i=0;i<M.length;i++){if(M[i].id===id)return M[i];}return null;}
+function runMotion(m,t,st,clock,step){
+  var forms=P(m.ch?m.ch(t):{});
+  if(m.custom) forms=m.custom(forms,t,{dt:step/1000, st:st, clock:clock/1000});
+  return forms;
+}
+// scale a pose uniformly about the artboard centre (fit-to-canvas; never crops)
+function scaleAbout(forms,s){ if(s>=0.999) return forms;
+  return forms.map(function(f){return {x:CX+(f.x-CX)*s, y:CY+(f.y-CY)*s, r:f.r*s, blue:f.blue||0, col:f.col||null};});}
+// blend two poses; w eased 0..1. col resolves to rest colours.
+function lerpForms(a,b,w){ return a.map(function(f,i){var g=b[i];
+  return {x:lerp(f.x,g.x,w), y:lerp(f.y,g.y,w), r:lerp(f.r,g.r,w), blue:lerp(f.blue||0,g.blue||0,w), col:null};});}
+// largest edge-distance from centre over the segment => scale so it fits the artboard (safe radius 480 of 500)
+function computeFit(m,play){ var st={},maxR=0,step=33;
+  for(var t=0;t<=play+900;t+=step){ var f=runMotion(m,Math.min(t,m.dur),st,t,step);
+    for(var i=0;i<4;i++){var rr=Math.hypot(f[i].x-CX,f[i].y-CY)+f[i].r; if(rr>maxR)maxR=rr;} }
+  return Math.min(1, 480/maxR); }
+var SQ={idx:0,phase:'run',clock:0,st:{},holdT:0,stage:'in',playing:true,px:48,loop:-1,reps:1};  // loop:-1 => full sequence; >=0 => loop that one action. reps => loop-count multiplier
+var seqStage=null, seqActual=null, sqLast=performance.now();
+function seqLabel(){
+  var seg=SEQ[SQ.idx], m=Mby(seg.id);
+  var nm=document.getElementById('seqNow'); if(nm) nm.textContent=seg.state||(m?m.name:'');
+  var ap=document.getElementById('seqApp'); if(ap) ap.textContent=(seg.app||'')+(m?'   ·   '+m.name:'');
+  var ph=document.getElementById('seqPhase');
+  if(ph) ph.textContent=(SQ.phase==='hold')?'rest':(SQ.stage==='in'?'intro':(SQ.stage==='out'?'outro':'loop'));
+  document.querySelectorAll('#seqSteps .seqstep').forEach(function(el,i){
+    el.classList.toggle('on', i===SQ.idx);
+    el.classList.toggle('done', i<SQ.idx);
+  });
+}
+// Playhead timeline for the current action: intro | loop x reps | outro, with a moving head.
+function buildSeqStrip(){
+  var host=document.getElementById('seqStrip'); if(!host) return;
+  var seg=SEQ[SQ.idx], reps=SQ.reps||1, html='';
+  function segEl(label,dur){ return '<div class="seg" style="flex:'+dur+' 1 0"><span class="sl">'+label+'</span></div>'; }
+  html+=segEl('intro',seg.intro);
+  for(var k=0;k<reps;k++){ html+=segEl('loop',seg.play); }
+  html+=segEl('outro',seg.tail);
+  host.innerHTML=html+'<div class="head" id="seqHead"></div>';
+  SQ._sidx=SQ.idx; SQ._sreps=reps;
+}
+function seqStripUpdate(){
+  if(SQ._sidx!==SQ.idx || SQ._sreps!==(SQ.reps||1)) buildSeqStrip();   // rebuild only when action/reps change
+  var seg=SEQ[SQ.idx], reps=SQ.reps||1, total=seg.intro+seg.play*reps+seg.tail;
+  var head=document.getElementById('seqHead'); if(!head) return;
+  head.style.left=((SQ.phase==='hold')?100:clamp(SQ.clock/total*100,0,100))+'%';
+  var ai;
+  if(SQ.phase==='hold') ai=-1;
+  else if(SQ.clock<seg.intro) ai=0;
+  else if(SQ.clock<seg.intro+seg.play*reps) ai=1+Math.floor((SQ.clock-seg.intro)/seg.play);
+  else ai=reps+1;
+  document.querySelectorAll('#seqStrip .seg').forEach(function(el,i){ el.classList.toggle('on', i===ai); });
+}
+function seqRestart(){SQ.idx=0;SQ.phase='run';SQ.clock=0;SQ.st={};SQ.stage='in';buildSeqStrip();seqLabel();}
+// Jump to the start of a step (fresh motion state, entering from rest), and resume playing.
+function seqSeek(i){SQ.idx=((i%SEQ.length)+SEQ.length)%SEQ.length;SQ.phase='run';SQ.clock=0;SQ.st={};SQ.holdT=0;SQ.stage='in';
+  SQ.playing=true; var pb=document.getElementById('seqPlay'); if(pb)pb.textContent='Pause'; seqLabel();}
+function seqFrame(now){
+  requestAnimationFrame(seqFrame);
+  if(document.getElementById('seqView').hidden) return;
+  var dt=now-sqLast; if(dt<1000/30) return; sqLast=now;            // 30fps cap
+  if(!SQ.playing){ return; }
+  var step=dt>100?33:dt;
+  params=LPARAMS;
+  var seg=SEQ[SQ.idx], m=Mby(seg.id), REST=restPose();
+  var pl=seg.play*(SQ.reps||1), total=seg.intro+pl+seg.tail, forms;      // loop window x the loop-count multiplier
+  if(SQ.phase==='run'){
+    SQ.clock+=step;
+    // reps>1: wrap the motion time so the loop repeats; reps==1: original single-pass behaviour (capped at dur)
+    var t=((SQ.reps||1)>1 && m.dur>0)?(SQ.clock%m.dur):Math.min(SQ.clock, m.dur);
+    var mp=scaleAbout(runMotion(m,t,SQ.st,SQ.clock,step), seg.fit||1);   // fit-to-canvas
+    if(SQ.clock<seg.intro){ var iw=SQ.clock/seg.intro;                                                   // bloom out of rest
+      forms=m.seqIntro? m.seqIntro(REST, mp, iw) : lerpForms(REST, mp, eio(iw)); SQ.stage='in'; }         // motion may define its own intro settle
+    else if(SQ.clock<seg.intro+pl){ forms=mp; SQ.stage='play'; }                                        // the loop (x reps)
+    else if(SQ.clock<total){ forms=lerpForms(mp, REST, eio((SQ.clock-seg.intro-pl)/seg.tail)); SQ.stage='out'; } // settle to rest
+    else { SQ.phase='hold'; SQ.holdT=0; forms=REST; }
+    seqLabel();
+  } else { // short breath at REST (both sides are the same pose, so the link is seamless)
+    SQ.holdT+=step; forms=REST;
+    if(SQ.holdT>=200){ SQ.idx=(SQ.loop>=0)?SQ.loop:(SQ.idx+1)%SEQ.length; SQ.phase='run'; SQ.clock=0; SQ.st={}; SQ.stage='in'; seqLabel(); }
+  }
+  seqStripUpdate();
+  var solo=!!(m&&m.seqSolo);                                  // detach the node for actions that would show a thin tether
+  setStageSolo(seqStage,solo); setStageSolo(seqActual,solo);
+  var gb=(m&&m.seqBlur)||22, ga=(m&&m.seqA)||19;              // per-action goo (chain uses the tighter gallery goo)
+  setStageGoo(seqStage,gb,ga); setStageGoo(seqActual,gb,ga);
+  var pf=envCopy(forms, now);
+  paintLoader(seqStage,pf,false);
+  paintLoader(seqActual,pf,seqActual.px<=16);
+}
+function rebuildSeqActual(){var w=document.getElementById('seqActualWrap'); w.innerHTML='';
+  seqActual=buildLoaderStage(SQ.px); seqActual.svg.setAttribute('viewBox','0 0 1000 1000');
+  w.appendChild(seqActual.svg); document.getElementById('seqPxLabel').textContent=seqActual.px;}
+function buildLparamToggles(hostId){                                    // universal toggles -> LPARAMS (loader + sequence)
+  var host=document.getElementById(hostId); if(!host)return;
+  TOGGLES.concat(MODES).forEach(function(cfg){
+    var alt=MODES.indexOf(cfg)>=0, b=document.createElement('button');
+    b.className='chip'+(alt?' alt':''); b.textContent=cfg.name; b.setAttribute('aria-pressed',LPARAMS[cfg.k]?'true':'false');
+    b.onclick=function(){var v=(b.getAttribute('aria-pressed')!=='true'); b.setAttribute('aria-pressed',v?'true':'false'); LPARAMS[cfg.k]=v;};
+    host.appendChild(b);
+  });
+}
+function initSeq(){
+  params=LPARAMS;
+  seqStage=buildLoaderStage(360); seqStage.svg.setAttribute('viewBox','0 0 1000 1000');   // full artboard, no crop
+  document.getElementById('seqZoomWrap').appendChild(seqStage.svg);
+  rebuildSeqActual();
+  SEQ.forEach(function(s){ s.fit=computeFit(Mby(s.id), s.play); });                        // per-motion fit-to-canvas
+  var host=document.getElementById('seqSteps');
+  SEQ.forEach(function(s,i){var m=Mby(s.id); var el=document.createElement('div'); el.className='seqstep';
+    el.innerHTML='<span class="n">'+(i+1)+'</span>'+(s.state||(m?m.name:s.id));
+    el.title=(s.app||'')+(m?'  —  '+m.name:''); el.onclick=function(){seqSeek(i);}; host.appendChild(el);});
+  var loopSel=document.getElementById('seqLoop');
+  loopSel.innerHTML='<option value="-1">Full sequence</option>'+SEQ.map(function(s,i){var m=Mby(s.id);return '<option value="'+i+'">'+(s.state||(m?m.name:s.id))+(m?' ('+m.name+')':'')+'</option>';}).join('');
+  loopSel.onchange=function(){ SQ.loop=parseInt(loopSel.value,10); if(SQ.loop>=0) seqSeek(SQ.loop); };
+  document.querySelectorAll('#seqReps [data-reps]').forEach(function(b){b.onclick=function(){
+    document.querySelectorAll('#seqReps button').forEach(function(x){x.classList.remove('on');}); b.classList.add('on');
+    SQ.reps=parseInt(b.getAttribute('data-reps'),10); seqSeek(SQ.idx);};});   // restart current action so the new count applies cleanly
+  document.getElementById('seqPlay').onclick=function(){SQ.playing=!SQ.playing; this.textContent=SQ.playing?'Pause':'Play';};
+  document.getElementById('seqRestart').onclick=function(){ SQ.loop=-1; loopSel.value='-1'; seqRestart(); };
+  document.querySelectorAll('#seqSizes [data-px]').forEach(function(b){b.onclick=function(){
+    document.querySelectorAll('#seqSizes button').forEach(function(x){x.classList.remove('on');}); b.classList.add('on');
+    SQ.px=parseInt(b.getAttribute('data-px'),10); rebuildSeqActual();};});
+  buildLparamToggles('seqToggles');
+  buildColourPicker('seqCols',
+    function(h){ LPARAMS.hue=h; }, function(duo){ LPARAMS.duotone=duo; }, LPARAMS.hue, LPARAMS.duotone);
+  buildBgPicker('seqBg','white');
+  buildSeqStrip();
+  seqLabel();
+  requestAnimationFrame(seqFrame);
+}
+
+build(); buildControls(); requestAnimationFrame(frame); initLoader(); initSeq();
+</script>
