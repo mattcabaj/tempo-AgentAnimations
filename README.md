@@ -2,7 +2,7 @@
 
 **Version v1.0** · see `CHANGELOG.md` for what changed and integration notes.
 
-Test batch for the Skedulo dev team to confirm the Tempo agent-state animations
+For the Skedulo dev team to confirm the Tempo agent-state animations
 render and loop correctly in-platform.
 
 ## What's inside
