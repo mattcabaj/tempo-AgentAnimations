@@ -1,4 +1,4 @@
-# Skedulo Tempo: Agent Animations (Test Batch)
+# Skedulo Tempo: Agent Animations
 
 **Version v1.0** · see `CHANGELOG.md` for what changed and integration notes.
 
